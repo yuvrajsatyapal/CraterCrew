@@ -71,23 +71,39 @@ it("draws the airburst parent once before splitting into six separate fragments"
   expect(fragments.every((p) => p.startIndex >= split - 1)).toBe(true);
 });
 
-it("keeps late landing feedback within the server shot tail", async () => {
+it("gives hit tags a full lifetime even after the shot ends", async () => {
   const { popupProgress } = await import("../src/client/feedback");
-  expect(popupProgress(54, 32, 68)).toBe(0);
-  expect(popupProgress(54, 68, 68)).toBe(1);
-  expect(popupProgress(54, 61, 68)).toBe(0.5);
+  expect(popupProgress(1000, 999)).toBe(0);
+  expect(popupProgress(1000, 1900)).toBeCloseTo(0.375);
+  expect(popupProgress(1000, 3400)).toBe(1);
 });
 
-it("keeps a rising damage-number stream within the battlefield and scales gently on appearance", async () => {
+it("shows plain white hit values and a minus only for self-hit penalties", async () => {
+  const { scoreTagText } = await import("../src/client/feedback");
+  expect(scoreTagText(20, false)).toBe("20");
+  expect(scoreTagText(20, true)).toBe("−20");
+});
+
+it("starts at the tank and rises at constant size without a lane fan", async () => {
   const { popupPose } = await import("../src/client/feedback");
-  const start = popupPose({ x: 1198, y: 75 }, 0, 4, false);
-  const middle = popupPose({ x: 1198, y: 75 }, 0.5, 4, false);
-  expect(start.x).toBeLessThanOrEqual(1180);
-  expect(start.y).toBeGreaterThanOrEqual(18);
-  expect(middle.y).toBeLessThanOrEqual(start.y);
-  expect(middle.alpha).toBe(1);
-  expect(popupPose({ x: 10, y: 100 }, 0.9, 0, false).alpha).toBeLessThan(1);
-  expect(popupPose({ x: 400, y: 400 }, 0.5, 0, true).scale).toBe(1);
+  const start = popupPose({ x: 400, y: 400 }, 0, 0, false);
+  expect(start.x).toBe(400);
+  expect(start.y).toBe(382);
+  for (const progress of [0, 0.2, 0.5, 0.9]) {
+    const pose = popupPose({ x: 400, y: 400 }, progress, 0, false);
+    expect(pose.scale).toBe(1);
+    expect(pose.y).toBeLessThanOrEqual(start.y);
+    expect(Math.abs(pose.x - 400)).toBeLessThanOrEqual(12);
+  }
+  expect(popupPose({ x: 400, y: 400 }, 0.5, 1, false).x).not.toBe(
+    popupPose({ x: 400, y: 400 }, 0.5, 0, false).x,
+  );
+  expect(popupPose({ x: 400, y: 400 }, 0.5, 0, true).y).toBe(377);
+  expect(popupPose({ x: 1198, y: 10 }, 0.5, 0, false).x).toBeLessThanOrEqual(
+    1180,
+  );
+  expect(popupPose({ x: 10, y: 10 }, 1, 0, false).y).toBeGreaterThanOrEqual(18);
+  expect(popupPose({ x: 400, y: 400 }, 1, 0, false).alpha).toBe(0);
 });
 
 it("removes a projectile exactly when its timestamped impact starts", () => {

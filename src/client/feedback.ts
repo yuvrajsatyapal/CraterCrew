@@ -83,32 +83,34 @@ export function visibleFlightPaths(result: ShotResult, elapsed: number) {
   });
 }
 
-/** Landing popups use only the remaining tail, keeping online turn timing intact. */
-export function popupProgress(start: number, elapsed: number, shotEnd: number) {
-  return clamp(
-    (elapsed - start) / Math.max(1, Math.min(36, shotEnd - start)),
-    0,
-    1,
-  );
+/** Cosmetic tags outlive the shot tail without extending the turn lock. */
+export function popupProgress(startMs: number, nowMs: number) {
+  return clamp((nowMs - startMs) / 2400, 0, 1);
 }
 
-/** Compact, bounded score stream: readable near ceilings and on small screens. */
+export function scoreTagText(amount: number, self: boolean) {
+  return `${self ? "−" : ""}${amount}`;
+}
+
+/** Small, constant-size reference tags rise with a gentle sideways drift. */
 export function popupPose(
   origin: { x: number; y: number },
   progress: number,
   rank: number,
   reduced: boolean,
 ) {
-  const t = clamp(progress, 0, 1),
-    lane = rank % 5;
+  const t = clamp(progress, 0, 1);
+  const stagger = rank % 3;
   return {
-    x: clamp(origin.x + (lane - 2) * 13, 20, 1180),
-    y: clamp(
-      origin.y - 36 - Math.floor(rank / 5) * 13 - t * (reduced ? 10 : 74),
-      18,
-      616,
+    x: clamp(
+      origin.x +
+        stagger * 12 +
+        (reduced ? 0 : 12 * Math.sin(t * Math.PI * 2 + stagger)),
+      20,
+      1180,
     ),
-    alpha: t < 0.7 ? 1 : clamp((1 - t) / 0.3, 0, 1),
-    scale: reduced ? 1 : 1 + 0.22 * Math.sin(Math.min(1, t * 5) * Math.PI),
+    y: clamp(origin.y - 18 - stagger * 3 - t * (reduced ? 10 : 135), 18, 616),
+    alpha: t < 0.85 ? 1 : clamp((1 - t) / 0.15, 0, 1),
+    scale: 1,
   };
 }

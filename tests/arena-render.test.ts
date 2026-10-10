@@ -119,3 +119,94 @@ it("legacy crater playback opens at the authoritative collision tick", async () 
   arena.animate(result, () => {});
   expect(internal.animation.impactTimes[0]).toBe(result.blasts[0].time);
 });
+
+it("keeps cosmetic hit tags alive after a shot and destroys them when expired", () => {
+  const arena = new Arena();
+  const label = {
+    setPosition: vi.fn(),
+    setAlpha: vi.fn(),
+    setScale: vi.fn(),
+    destroy: vi.fn(),
+  };
+  const internal = arena as unknown as {
+    scorePopups: {
+      label: typeof label;
+      start: number;
+      x: number;
+      y: number;
+      rank: number;
+    }[];
+  };
+  internal.scorePopups = [{ label, start: 100, x: 400, y: 400, rank: 0 }];
+  arena.update(1000);
+  expect(label.setPosition).toHaveBeenCalled();
+  expect(label.destroy).not.toHaveBeenCalled();
+  arena.update(2500);
+  expect(label.destroy).toHaveBeenCalledOnce();
+  expect(internal.scorePopups).toHaveLength(0);
+});
+
+it("destroys lingering hit tags when cancelling a session", () => {
+  const arena = new Arena();
+  const label = { destroy: vi.fn() };
+  const internal = arena as unknown as {
+    scorePopups: {
+      label: typeof label;
+      start: number;
+      x: number;
+      y: number;
+      rank: number;
+    }[];
+  };
+  internal.scorePopups = [{ label, start: 100, x: 400, y: 400, rank: 0 }];
+  arena.cancelAnimation();
+  expect(label.destroy).toHaveBeenCalledOnce();
+  expect(internal.scorePopups).toHaveLength(0);
+});
+
+it("finishes the turn while a fresh cosmetic tag is still visible", () => {
+  const { arena, draw, surface } = renderer();
+  draw.match.terrain.fill(300);
+  draw.match.tanks.forEach((tank) => {
+    tank.y = 300;
+  });
+  const label = {
+    setPosition: vi.fn(),
+    setAlpha: vi.fn(),
+    setScale: vi.fn(),
+    destroy: vi.fn(),
+  };
+  const done = vi.fn();
+  const internal = arena as unknown as {
+    effects: Graphics;
+    time: { now: number };
+    drawTanks: () => void;
+    render: () => void;
+    scorePopups: {
+      label: typeof label;
+      start: number;
+      x: number;
+      y: number;
+      rank: number;
+    }[];
+  };
+  internal.effects = surface;
+  internal.time = { now: 0 };
+  internal.drawTanks = () => {};
+  internal.render = () => {};
+  arena.animate(
+    {
+      shot: { angle: 45, power: 60, weapon: "shell" },
+      state: structuredClone(draw.match),
+      paths: [],
+      blasts: [],
+      damage: [0, 0],
+    },
+    done,
+  );
+  internal.scorePopups = [{ label, start: 500, x: 400, y: 300, rank: 0 }];
+  arena.update(1000);
+  expect(done).toHaveBeenCalledOnce();
+  expect(label.destroy).not.toHaveBeenCalled();
+  expect(internal.scorePopups).toHaveLength(1);
+});

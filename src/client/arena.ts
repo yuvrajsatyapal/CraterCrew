@@ -31,6 +31,7 @@ import {
   visibleFlightPaths,
   popupProgress,
   popupPose,
+  scoreTagText,
   type ScoreEvent,
 } from "./feedback";
 import { drawFlight, drawBlast, hitFlash } from "./weapon-effects";
@@ -49,7 +50,13 @@ export class Arena extends Phaser.Scene {
   private aim!: Phaser.GameObjects.Graphics;
   private effects!: Phaser.GameObjects.Graphics;
   private backdrop!: Phaser.GameObjects.Graphics;
-  private scoreLabels: Phaser.GameObjects.Text[] = [];
+  private scorePopups: {
+    label: Phaser.GameObjects.Text;
+    start: number;
+    x: number;
+    y: number;
+    rank: number;
+  }[] = [];
   private lastTerrain: number[] | null = null;
   private match: Match | null = null;
   private playerAngles: [number, number] = [45, 135];
@@ -67,14 +74,6 @@ export class Arena extends Phaser.Scene {
     impactTimes: number[];
     scores: ScoreEvent[];
     scored: Set<number>;
-    popups: {
-      label: Phaser.GameObjects.Text;
-      start: number;
-      x: number;
-      y: number;
-      rank: number;
-    }[];
-    scoreDelta: number;
     scoreTotals: [number, number];
     world?: MaterialWorld;
     replay?: WeaponReplay;
@@ -272,8 +271,8 @@ export class Arena extends Phaser.Scene {
     this.animation = null;
     this.moving = null;
     this.effects?.clear();
-    this.scoreLabels.forEach((label) => label.destroy());
-    this.scoreLabels = [];
+    this.scorePopups.forEach(({ label }) => label.destroy());
+    this.scorePopups = [];
     if (previous && commit) {
       this.poses = [];
       this.render(previous.result.state, previous.result.shot);
@@ -306,8 +305,6 @@ export class Arena extends Phaser.Scene {
       ),
       scores: scoreEvents(this.match, result),
       scored: new Set(),
-      popups: [],
-      scoreDelta: 0,
       scoreTotals: [this.match.tanks[0].points, this.match.tanks[1].points],
       world: result.events
         ? structuredClone(this.match.world ?? createWorld(this.match.terrain))
@@ -315,7 +312,22 @@ export class Arena extends Phaser.Scene {
       replay: result.events ? new WeaponReplay(result.events) : undefined,
     };
   }
+  private updateScorePopups(time: number) {
+    this.scorePopups = this.scorePopups.filter((popup) => {
+      const t = popupProgress(popup.start, time);
+      if (t >= 1) {
+        popup.label.destroy();
+        return false;
+      }
+      const pose = popupPose(popup, t, popup.rank, this.reducedMotion);
+      popup.label.setPosition(pose.x, pose.y);
+      popup.label.setAlpha(pose.alpha);
+      popup.label.setScale(pose.scale);
+      return true;
+    });
+  }
   update(time: number) {
+    this.updateScorePopups(time);
     if (this.moving && !this.animation) {
       const movement = this.moving;
       const progress = Math.min(1, (time - movement.start) / movement.duration);
@@ -489,41 +501,27 @@ export class Arena extends Phaser.Scene {
       this.onScore(attacker, a.scoreTotals[attacker]);
       if (event.kind === "fall") this.onImpact(a.result.shot.weapon, true);
       const label = this.add
-        .text(0, 0, `${self ? "−" : "+"}${event.amount}`, {
+        .text(0, 0, scoreTagText(event.amount, self), {
           fontFamily: "Arial, sans-serif",
-          fontSize: "16px",
+          fontSize: "14px",
           fontStyle: "bold",
-          color: self ? "#ffb4a0" : "#ffffff",
+          color: "#ffffff",
           stroke: "#151515",
-          strokeThickness: 2,
+          strokeThickness: 1,
         })
         .setOrigin(0.5);
-      this.scoreLabels.push(label);
-      const simultaneous = a.popups.filter(
-        (p) =>
-          Math.abs(p.x - (event.x ?? pose.x)) < 30 && elapsed - p.start < 10,
+      const simultaneous = this.scorePopups.filter(
+        (p) => Math.abs(p.x - pose.x) < 30 && time - p.start < 250,
       ).length;
-      a.popups.push({
+      this.scorePopups.push({
         label,
-        start: elapsed,
-        x: event.x ?? pose.x,
-        y: event.y ?? pose.y,
+        start: time,
+        x: pose.x,
+        y: pose.y,
         rank: simultaneous,
       });
     });
-    for (const popup of a.popups) {
-      const t = popupProgress(
-        popup.start,
-        elapsed,
-        (a.result.durationTicks ?? Math.max(0, ...a.impactTimes)) + 36,
-      );
-      const presentation = popupPose(popup, t, popup.rank, this.reducedMotion);
-      popup.label.setPosition(presentation.x, presentation.y);
-      popup.label.setAlpha(presentation.alpha);
-      popup.label.setScale(presentation.scale);
-      popup.label.setVisible(t < 1);
-      if (t < 1) finished = false;
-    }
+    this.updateScorePopups(time);
     a.scores.forEach((event, index) => {
       if (!a.scored.has(index)) {
         finished = false;
@@ -540,8 +538,6 @@ export class Arena extends Phaser.Scene {
     if (finished) {
       this.animation = null;
       g.clear();
-      this.scoreLabels.forEach((label) => label.destroy());
-      this.scoreLabels = [];
       this.render(a.result.state, this.shot);
       a.done();
     }
