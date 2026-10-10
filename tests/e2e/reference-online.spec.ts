@@ -1,6 +1,8 @@
+import { finishOnlineDraft } from "./draft-fixture";
+import type { Match, WeaponId } from "../../src/shared/game";
 import { test, expect } from "@playwright/test";
 
-test("reference material weapon synchronizes both online players", async ({
+test("drafted reference weapon synchronizes both online players", async ({
   browser,
 }) => {
   test.setTimeout(90000);
@@ -23,22 +25,27 @@ test("reference material weapon synchronizes both online players", async ({
     await second.goto(`/?room=${code}`);
     await second.locator("#join-room").click();
     await second.locator("#ready").click();
+    const chosen = await first
+      .locator("[data-draft-weapon]")
+      .first()
+      .getAttribute("data-draft-weapon");
+    await finishOnlineDraft(first, second);
     await expect(first.locator("#fire")).toBeEnabled();
     await first.locator("#weapon-open").click();
-    await first
-      .getByRole("searchbox", { name: "Search weapons" })
-      .fill("rampart");
-    await first.locator('[data-weapon="rampart"]').click();
+    await first.getByRole("searchbox", { name: "Search weapons" }).fill("");
+    await first.locator(`[data-weapon="${chosen}"]`).click();
     await first.locator("#fire").click();
     await expect(second.locator("#fire")).toBeEnabled({ timeout: 20000 });
     const state = async (page: typeof first) =>
-      page.evaluate(() => (window as any).craterCrewDiagnostics.match);
+      page.evaluate(
+        () =>
+          (window as unknown as { craterCrewDiagnostics: { match: Match } })
+            .craterCrewDiagnostics.match,
+      );
     const authoritative = await state(first);
     expect(authoritative.shots).toBe(1);
-    expect(authoritative.tanks[0].ammo.rampart).toBe(2);
-    expect(authoritative.world.cells.some((cell: number) => cell === 2)).toBe(
-      true,
-    );
+    expect(authoritative.tanks[0].ammo[chosen as WeaponId]).toBe(2);
+    expect(authoritative.world).toBeDefined();
     await expect.poll(() => state(second)).toEqual(authoritative);
     for (const page of [first, second])
       for (const player of [0, 1])

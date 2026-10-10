@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { finishDraft } from "./draft-fixture";
+import { expect, test } from "./draft-fixture";
 import type { Match } from "../../src/shared/game";
 
 test("normal-motion Lava Flow stays grounded and completes the turn with honest scores", async ({
@@ -12,6 +13,7 @@ test("normal-motion Lava Flow stays grounded and completes the turn with honest 
   });
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   const match = () =>
     page.evaluate(
       () =>
@@ -57,6 +59,7 @@ test("consecutive mixed weapons preserve untouched land geometry and pixels", as
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   const bounds = (await page.locator("canvas").boundingBox())!;
   const clip = {
@@ -119,6 +122,7 @@ test("repaired piercing, airburst and scatter playback completes with authoritat
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   for (const [index, weapon] of [
     "nail-gun",
     "reference-airburst",
@@ -153,6 +157,7 @@ test("pixel terrain preserves surviving dirt under an impact and Booster Worm co
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await expect(page.locator("canvas")).toHaveCSS(
     "image-rendering",

@@ -1,3 +1,11 @@
+import {
+  applyDraft,
+  createDraft,
+  pickWeapon,
+  randomPick,
+  type WeaponDraft,
+} from "../shared/weapon-draft";
+import { mountWeaponDraft } from "./weapon-draft-view";
 import "./style.css";
 import { tankIllustration, menuLandscape } from "./art";
 import {
@@ -27,6 +35,23 @@ const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
   document.querySelector<T>(selector)!;
 const logo = `<svg viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M5 12 18 5l13 7v13l-13 7-13-7Z" stroke="#7edbd1" stroke-width="2"/><path d="m11 15 7-4 7 4v7l-7 4-7-4Z" fill="#7edbd1"/><path d="m17 11 7 4-7 4-6-4Z" fill="#14252c"/><path d="M18 19v7" stroke="#14252c" stroke-width="2"/></svg>`;
 const brand = `<a href="#" class="brand" id="brand" aria-label="CraterCrew home">${logo}<span>Crater<em>Crew</em></span></a>`;
+let draft: WeaponDraft | null = null;
+let draftView: ReturnType<typeof mountWeaponDraft> | null = null;
+let pendingPick: number | null = null;
+let botPickAt = 0;
+let botPickRevision = -1;
+let distributingRandomly = false;
+let nextRandomPickAt = 0;
+let randomPreviewUntil = 0;
+function disposeDraft() {
+  draftView?.dispose();
+  draftView = null;
+  pendingPick = null;
+  botPickRevision = -1;
+  distributingRandomly = false;
+  nextRandomPickAt = 0;
+  randomPreviewUntil = 0;
+}
 let loadingGame = false;
 let sessionVersion = 0;
 let animationVersion = 0;
@@ -116,7 +141,7 @@ function bindHeader() {
   };
 }
 function commonDialogs() {
-  return `<dialog id="help-dialog"><button class="dialog-close" data-close aria-label="Close manual">×</button><div class="eyebrow">FIELD MANUAL / 001</div><h2>Every shot changes the game.</h2><p>Take turns launching shells. Play ten volleys each. Hits and falls score points; hitting yourself subtracts points. The highest score wins. Tanks stay in play until the last volley.</p><div class="help-grid"><b>01</b><span>Set your angle and power. 0° fires right, 90° straight up, and 180° left. Use the barrel direction to aim — there is no projected flight path.</span><b>02</b><span>Watch the wind. Choose a weapon. Standard shells are unlimited; each special weapon has three rounds.</span><b>03</b><span>Move to improve your position. You have six short moves per turn, but steep slopes block your path.</span><b>04</b><span>Keyboard: ← → adjust angle, ↑ ↓ adjust power, Space fires. A / D moves. Online turns last 60 seconds.</span></div><p>Designed for mouse and touch. Landscape gives you more room on a phone.</p><button class="primary" data-close>Got it <span>↗</span></button></dialog><dialog id="exit-dialog"><h2>Leave the battlefield?</h2><p>Local progress will be lost. In an online match, disconnecting for 30 seconds forfeits your tank.</p><div class="dialog-actions"><button class="secondary" data-close>Keep playing</button><button class="primary" id="confirm-exit">Leave match ↗</button></div></dialog>`;
+  return `<dialog id="help-dialog"><button class="dialog-close" data-close aria-label="Close manual">×</button><div class="eyebrow">FIELD MANUAL / 001</div><h2>Every shot changes the game.</h2><p>Take turns launching shells. Play ten volleys each. Hits and falls score points; hitting yourself subtracts points. The highest score wins. Tanks stay in play until the last volley.</p><div class="help-grid"><b>01</b><span>Set your angle and power. 0° fires right, 90° straight up, and 180° left. Use the barrel direction to aim — there is no projected flight path.</span><b>02</b><span>Watch the wind. Draft ten weapons before battle. Standard shells are unlimited; drafted special weapons have their listed ammunition.</span><b>03</b><span>Move to improve your position. You have six short moves per turn, but steep slopes block your path.</span><b>04</b><span>Keyboard: ← → adjust angle, ↑ ↓ adjust power, Space fires. A / D moves. Online turns last 60 seconds.</span></div><p>Designed for mouse and touch. Landscape gives you more room on a phone.</p><button class="primary" data-close>Got it <span>↗</span></button></dialog><dialog id="exit-dialog"><h2>Leave the battlefield?</h2><p>Local progress will be lost. In an online match, disconnecting for 30 seconds forfeits your tank.</p><div class="dialog-actions"><button class="secondary" data-close>Keep playing</button><button class="primary" id="confirm-exit">Leave match ↗</button></div></dialog>`;
 }
 function bindDialogs() {
   document
@@ -150,6 +175,7 @@ function disposeArena() {
 }
 function home() {
   sessionVersion++;
+  disposeDraft();
   document.body.classList.remove("playing");
   disposeArena();
   clearTimeout(botTimer);
@@ -228,6 +254,7 @@ async function joinOnline(code: string) {
   }
   const name = getCallsign();
   sessionVersion++;
+  disposeDraft();
   disposeArena();
   roomCode = code;
   mode = "online";
@@ -261,6 +288,7 @@ function connect(name: string) {
   socket.onopen = () => {
     if (version !== connectionVersion) return;
     busy = false;
+    draftView?.update();
     updateControls();
     toast("Connected to the crew.");
   };
@@ -272,7 +300,11 @@ function connect(name: string) {
       updateLobby();
       updateControls();
     }
-    if (data.type === "error") toast(data.message);
+    if (data.type === "error") {
+      pendingPick = null;
+      draftView?.update();
+      toast(data.message);
+    }
     if (data.type === "shot") {
       void animateShot(data.result);
     }
@@ -285,13 +317,26 @@ function connect(name: string) {
         );
       names = room!.members.map((m) => m.name);
       match = room!.match;
+      draft = room!.draft ?? null;
       if (busy && arena && match.revision > activeShotRevision) {
         animationVersion++;
         arena.scene.cancelAnimation();
         busy = false;
       }
       if (room!.phase === "lobby") updateLobby();
-      else if (!arena && !loadingGame) {
+      else if (room!.phase === "drafting" && room!.draft) {
+        draft = room!.draft;
+        if (pendingPick !== draft.revision) pendingPick = null;
+        if (!draftView) {
+          disposeArena();
+          aim = { angle: 45, power: 60, weapon: "shell" };
+          playerAngles = [45, 135];
+          playerPowers = [60, 60];
+          showDraft();
+        } else draftView.update();
+      } else if (room!.phase === "finished" && room!.draft?.remaining.length) {
+        showDraftOutcome();
+      } else if (!arena && !loadingGame) {
         void showGame();
       } else if (arena && !busy) {
         arena.scene.render(match, aim, playerAngles);
@@ -307,6 +352,8 @@ function connect(name: string) {
     }
     toast("Connection lost. Reconnecting…");
     busy = true;
+    pendingPick = null;
+    draftView?.update();
     updateControls();
     reconnectTimer = window.setTimeout(() => {
       if (version === connectionVersion) connect(name);
@@ -357,6 +404,7 @@ function send(message: unknown) {
 }
 async function start(next: Mode) {
   sessionVersion++;
+  disposeDraft();
   disposeArena();
   clearTimeout(botTimer);
   fpsSamples = [];
@@ -369,9 +417,108 @@ async function start(next: Mode) {
   playerAngles = [45, 135];
   playerPowers = [60, 60];
   busy = false;
-  await showGame();
+  draft = createDraft(match.seed, Date.now());
+  showDraft();
+}
+function tankOwns(id: WeaponId) {
+  // Keep depleted drafted weapons visible, so their ammunition state is clear.
+  return id === "shell" || !!draft?.picks[match.turn].includes(id);
+}
+function finishLocalDraft() {
+  if (!draft || draft.remaining.length) return;
+  match = applyDraft(match, draft);
+  void showGame();
+}
+function showDraft() {
+  document.body.classList.remove("playing");
+  app.innerHTML = `${header()}<main class="weapon-draft-screen" id="weapon-draft-screen"></main>${commonDialogs()}`;
+  bindHeader();
+  bindDialogs();
+  draftView = mountWeaponDraft($("#weapon-draft-screen"), {
+    snapshot: () => ({
+      draft: draft!,
+      names,
+      mode,
+      player,
+      paused: mode === "online" && !!room?.paused,
+      connected: mode !== "online" || socket?.readyState === WebSocket.OPEN,
+      pending: pendingPick === draft?.revision,
+      distributing: distributingRandomly,
+    }),
+    pick: (id, revision) => {
+      if (!draft || distributingRandomly) return;
+      if (mode === "online") {
+        pendingPick = revision;
+        send({ type: "pick", weapon: id, revision });
+        draftView?.update();
+      } else {
+        try {
+          draft = pickWeapon(draft, draft.turn, id, revision, Date.now());
+          sound("click", audio);
+          finishLocalDraft();
+          draftView?.update();
+        } catch (error) {
+          toast((error as Error).message);
+        }
+      }
+    },
+    random: () => {
+      if (mode !== "solo" || !draft || distributingRandomly) return;
+      distributingRandomly = true;
+      nextRandomPickAt = Date.now() + 450;
+      randomPreviewUntil = 0;
+      draftView?.update();
+      $("#weapon-draft-screen").scrollIntoView({ block: "start" });
+    },
+    menu: () => home(),
+    tick: () => {
+      if (mode === "online" || !draft) return;
+      const now = Date.now();
+      if (distributingRandomly) {
+        if (draft.remaining.length && now >= nextRandomPickAt) {
+          draft = randomPick(draft, now);
+          sound("click", audio);
+          nextRandomPickAt = now + 450;
+          if (!draft.remaining.length) randomPreviewUntil = now + 1500;
+        } else if (!draft.remaining.length && now >= randomPreviewUntil) {
+          finishLocalDraft();
+        }
+        return;
+      }
+      if (!draft.remaining.length) return;
+      if (botPickRevision !== draft.revision) {
+        botPickRevision = draft.revision;
+        botPickAt = now + 650;
+      }
+      if (
+        now >= draft.deadline ||
+        (mode === "solo" && draft.turn === 1 && now >= botPickAt)
+      ) {
+        draft = randomPick(draft, now);
+        finishLocalDraft();
+      }
+    },
+  });
+}
+function showDraftOutcome() {
+  disposeDraft();
+  const title =
+    match.winner === "draw"
+      ? "Draft ended in a draw"
+      : `${escapeText(names[match.winner as Player] || "Pilot")} wins`;
+  app.innerHTML = `${header()}<main class="home"><h1>${title}</h1><p>Your rival disconnected before battle.</p><div class="dialog-actions"><button id="draft-rematch" class="primary">Play Again</button><button id="draft-home" class="secondary">Main Menu</button></div></main>${commonDialogs()}`;
+  bindHeader();
+  bindDialogs();
+  $("#draft-home").onclick = () => home();
+  $<HTMLButtonElement>("#draft-rematch").disabled =
+    !!room?.members[player]?.rematch;
+  $("#draft-rematch").onclick = () => {
+    send({ type: "rematch" });
+    $<HTMLButtonElement>("#draft-rematch").disabled = true;
+  };
 }
 async function showGame() {
+  disposeDraft();
   const session = sessionVersion;
   loadingGame = true;
   document.body.classList.add("playing");
@@ -452,6 +599,7 @@ async function showGame() {
       .forEach((button) => {
         const definition = WEAPONS.find((w) => w.id === button.dataset.weapon)!;
         const visible =
+          tankOwns(definition.id) &&
           `${definition.name} ${definition.description}`
             .toLowerCase()
             .includes(query) &&
@@ -682,11 +830,28 @@ function updateWeapon() {
     .forEach((button) => {
       const id = button.dataset.weapon as WeaponId;
       const ammo = tank.ammo[id];
+      const query = $<HTMLInputElement>("#weapon-search")
+        .value.trim()
+        .toLowerCase();
+      const pack = $<HTMLSelectElement>("#weapon-pack").value;
+      const definition = WEAPONS.find((w) => w.id === id)!;
+      button.hidden =
+        !tankOwns(id) ||
+        !`${definition.name} ${definition.description}`
+          .toLowerCase()
+          .includes(query) ||
+        (pack !== "all" && !button.dataset.packs!.split("|").includes(pack));
       button.disabled = !canPlay() || ammo === 0;
       button.setAttribute("aria-pressed", String(id === aim.weapon));
       button.querySelector(".weapon-stock")!.textContent =
         ammo === -1 ? "Unlimited" : ammo === 0 ? "Empty" : `${ammo} rounds`;
     });
+  const visibleCount = document.querySelectorAll(
+    ".arsenal-weapon:not([hidden])",
+  ).length;
+  $("#weapon-results").textContent = visibleCount
+    ? `${visibleCount} weapon${visibleCount === 1 ? "" : "s"}`
+    : "No weapons match. Try another name or pack.";
   $("#ammo-label").textContent =
     tank.ammo[weapon.id] === -1 ? "∞" : `${tank.ammo[weapon.id]} LEFT`;
   Array.from($<HTMLSelectElement>("#weapon").options).forEach((option) => {
@@ -896,6 +1061,7 @@ window.setInterval(() => {
 Object.defineProperty(window, "craterCrewDiagnostics", {
   get: () => ({
     mode,
+    draft: draft ? structuredClone(draft) : null,
     match: structuredClone(match),
     busy,
     player,

@@ -1,4 +1,12 @@
 import {
+  applyDraft,
+  createDraft,
+  DRAFT_PICK_MS,
+  pickWeapon,
+  randomPick,
+  type WeaponDraft,
+} from "./weapon-draft";
+import {
   createMatch,
   fire,
   move,
@@ -24,7 +32,8 @@ export interface Room {
   seed: number;
   members: Member[];
   match: Match;
-  phase: "lobby" | "playing" | "finished";
+  phase: "lobby" | "drafting" | "playing" | "finished";
+  draft: WeaponDraft | null;
   paused: boolean;
   resolvingUntil: number;
   deadline: number;
@@ -36,6 +45,7 @@ export function newRoom(seed: number, now = Date.now()): Room {
     members: [],
     match: createMatch(seed),
     phase: "lobby",
+    draft: null,
     paused: false,
     resolvingUntil: 0,
     deadline: 0,
@@ -56,7 +66,12 @@ export function joinRoom(
     m.disconnectedAt = null;
     const wasPaused = room.paused;
     room.paused = room.members.some((m) => !m.connected);
-    if (wasPaused && !room.paused) room.deadline = now + TURN_MS;
+    if (wasPaused && !room.paused) {
+      room.deadline =
+        now + (room.phase === "drafting" ? DRAFT_PICK_MS : TURN_MS);
+      if (room.phase === "drafting" && room.draft)
+        room.draft.deadline = room.deadline;
+    }
     return existing as Player;
   }
   if (room.members.length >= 2 || room.phase !== "lobby")
@@ -90,8 +105,7 @@ export function command(
       room.members.length === 2 &&
       room.members.every((p) => p.ready && p.connected)
     ) {
-      room.phase = "playing";
-      room.deadline = now + TURN_MS;
+      beginDraft(room, now);
     }
     return null;
   }
@@ -102,14 +116,26 @@ export function command(
       const revision = room.match.revision + 1;
       room.match = createMatch(++room.seed);
       room.match.revision = revision;
-      room.phase = "playing";
+      beginDraft(room, now);
       room.paused = false;
       room.resolvingUntil = 0;
-      room.deadline = now + TURN_MS;
       room.members.forEach((p) => {
         p.rematch = false;
       });
     }
+    return null;
+  }
+  if (room.phase === "drafting") {
+    if (room.paused || !member.connected) throw Error("Draft is paused.");
+    if (m.type !== "pick" || !room.draft) throw Error("Choose a weapon first.");
+    room.draft = pickWeapon(
+      room.draft,
+      player as Player,
+      m.weapon as WeaponId,
+      m.revision as number,
+      now,
+    );
+    advanceDraft(room, now);
     return null;
   }
   if (room.phase !== "playing" || room.paused) throw Error("Match is paused.");
@@ -139,10 +165,10 @@ export function disconnect(room: Room, token: string, now: number) {
   if (!m) return;
   m.connected = false;
   m.disconnectedAt = now;
-  if (room.phase === "playing") room.paused = true;
+  if (room.phase === "playing" || room.phase === "drafting") room.paused = true;
 }
 export function expire(room: Room, now: number) {
-  if (room.phase !== "playing") return;
+  if (room.phase !== "playing" && room.phase !== "drafting") return;
   const lost = room.members.map(
     (m) =>
       !m.connected &&
@@ -157,6 +183,11 @@ export function expire(room: Room, now: number) {
     return;
   }
   if (!room.paused && now >= room.deadline) {
+    if (room.phase === "drafting" && room.draft) {
+      room.draft = randomPick(room.draft, now);
+      advanceDraft(room, now);
+      return;
+    }
     room.match = passTurn(room.match);
     if (room.match.winner !== null) room.phase = "finished";
     room.deadline = now + TURN_MS;
@@ -167,8 +198,24 @@ export function publicRoom(room: Room) {
     members: room.members.map(({ token, ...m }) => m),
     match: room.match,
     phase: room.phase,
+    draft: room.draft,
     paused: room.paused,
     resolvingUntil: room.resolvingUntil,
     deadline: room.deadline,
   };
+}
+
+function beginDraft(room: Room, now: number) {
+  room.phase = "drafting";
+  room.draft = createDraft(room.seed, now);
+  room.deadline = room.draft.deadline;
+}
+function advanceDraft(room: Room, now: number) {
+  if (!room.draft) return;
+  room.deadline = room.draft.deadline;
+  if (!room.draft.remaining.length) {
+    room.match = applyDraft(room.match, room.draft);
+    room.phase = "playing";
+    room.deadline = now + TURN_MS;
+  }
 }

@@ -1,5 +1,6 @@
+import { finishDraft } from "./draft-fixture";
 import { REFERENCE_WEAPONS } from "../../src/shared/reference-weapons";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./draft-fixture";
 for (const viewport of [
   { width: 1280, height: 900 },
   { width: 375, height: 812 },
@@ -11,6 +12,7 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     await page.goto("/");
     await page.locator("#local-play").click();
+    await finishDraft(page);
     await page.locator("#weapon-open").click();
     await expect(page.locator(".arsenal-weapon")).toHaveCount(85);
     await page
@@ -28,7 +30,7 @@ for (const viewport of [
     await page
       .getByRole("combobox", { name: "Weapon pack" })
       .selectOption("all");
-    await expect(page.locator(".arsenal-weapon:visible")).toHaveCount(85);
+    await expect(page.locator(".arsenal-weapon:visible")).toHaveCount(11);
     await page.locator('[data-weapon="neutron-beam"]').scrollIntoViewIfNeeded();
     await expect(page.locator("#weapon-dialog .dialog-close")).toBeInViewport();
     await page.screenshot({
@@ -59,6 +61,7 @@ for (let batch = 0; batch < 10; batch++)
     });
     await page.goto("/");
     await page.locator("#local-play").click();
+    await finishDraft(page);
     for (const [i, weapon] of REFERENCE_WEAPONS.slice(
       batch * 8,
       batch * 8 + 8,

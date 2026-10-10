@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { finishDraft } from "./draft-fixture";
+import { test, expect } from "./draft-fixture";
 
 test("console stays compact and its modules fit without overlap", async ({
   page,
@@ -6,6 +7,7 @@ test("console stays compact and its modules fit without overlap", async ({
   test.setTimeout(90000);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
 
   for (const viewport of [

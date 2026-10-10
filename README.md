@@ -22,11 +22,12 @@ Create a room, copy its invitation, open it in another browser/profile, and read
 ## Features
 
 - Solo versus an aiming bot, pass-and-play local duels, private two-player online rooms.
+- Before every match and rematch, draft 20 random special weapons in alternating turns: ten per tank, with a 15-second clock and automatic random picks on timeout. Solo Random visibly deals the remaining weapons one at a time to both tanks, then shows completed loadouts for 1.5 seconds before battle.
 - Seeded terrain, wind, 85 playable weapons, persistent material terrain, fall damage and movement fuel.
 - Six original weapons plus 79 unique weapons individually illustrated on the supplied BlitWise blog, each with its matching icon and reconstructed mechanics. Search the arsenal by name or filter by pack.
 - Previous/next weapon buttons, inline angle/power adjustment, terrain-following movement and per-projectile impact/fall animation.
 - Mouse, keyboard and responsive touch controls; optional synthesized sound and reduced effects.
-- Victory, draws and rematches. Unlimited standard shells; three rounds of each special weapon.
+- Victory, draws and rematches. Unlimited standard shells; three rounds of each drafted special weapon. Only your drafted weapons appear in your battle arsenal.
 - Server-validated commands, revision checks, bounded shot simulation, persisted room state, WebSocket hibernation, 60-second turns, 30-second disconnect forfeits and two-hour room expiration.
 
 Keyboard: left/right arrows change angle; up/down arrows change power; Space fires; A/D move. The field manual explains aiming and terrain tactics. Each tank starts with zero points. Play ten volleys each; the highest score wins. Angle 0 fires right, 90 up, and 180 left.
