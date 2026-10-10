@@ -1,92 +1,360 @@
 # CraterCrew
 
-A browser artillery duel with a classic metallic console, layered green terrain, and visuals studied from the supplied Pocket Tanks video. Built with TypeScript, Phaser, Vite, Cloudflare Workers, SQLite Durable Objects, Vitest and Playwright.
+A browser artillery game with destructible terrain, a draftable arsenal, and private two-player duels — wrapped in a retro metallic battle console.
 
-## Play locally
+Built with TypeScript, Phaser, Vite, and Cloudflare Durable Objects. Play against a bot, share a screen with a friend, or run private multiplayer locally.
 
-Requires Node.js 22.12 or newer.
+---
+
+## Table of Contents
+
+- [Screenshots](#screenshots)
+- [Project Overview](#project-overview)
+- [Key Features](#key-features)
+- [How to Play](#how-to-play)
+- [Tech Stack](#tech-stack)
+- [System Architecture](#system-architecture)
+- [Match Lifecycle](#match-lifecycle)
+- [Folder Structure](#folder-structure)
+- [Multiplayer & Storage](#multiplayer--storage)
+- [API Reference](#api-reference)
+- [Environment Variables](#environment-variables)
+- [Local Development](#local-development)
+- [Testing & Quality Checks](#testing--quality-checks)
+- [Project Scope](#project-scope)
+- [Credits & References](#credits--references)
+
+---
+
+## Screenshots
+
+### Battle Console
+
+![Retro battle console with terrain, tanks, and firing controls](docs/previews/weapon-console.png)
+
+### Weapon Draft — Desktop
+
+![Desktop weapon draft](docs/previews/weapon-draft-desktop.png)
+
+### Weapon Draft — Phone
+
+<img src="docs/previews/weapon-draft-phone.png" alt="Weapon draft on a phone-sized viewport" width="360">
+
+### Arsenal Reference
+
+![Searchable weapon arsenal](docs/previews/reference-arsenal.png)
+
+### Terrain & Weapon Effects
+
+![Lava Flow weapon effects on the battlefield](docs/previews/lava-flow-repaired.png)
+
+These are development captures; individual layouts may differ from the latest build.
+
+---
+
+## Project Overview
+
+CraterCrew turns each shot into a terrain puzzle: choose a weapon, account for wind, set your angle and power, and watch the battlefield change. Craters, tunnels, defenses, and tank movement all affect the next turn.
+
+| Play Mode           | Experience                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| Solo                | Duel an aiming bot in your browser                                                      |
+| Couch duel          | Two players take turns on the same device                                               |
+| Private online room | Share an invitation and play from separate browsers with the multiplayer Worker running |
+
+Solo and couch play run entirely in the frontend. Private rooms use an authoritative multiplayer service with shared game rules.
+
+---
+
+## Key Features
+
+### Weapons & Drafting
+
+- 85 playable weapons: six original weapons and 79 reference weapons with matching icons.
+- A randomized pool of 20 special weapons before each match and rematch.
+- Alternating picks give each player ten special weapons.
+- A 15-second pick timer with automatic random selection on timeout.
+- Solo Random deals the remaining weapons to both tanks and reveals their completed loadouts before battle.
+- Unlimited standard shells and three rounds per drafted special weapon.
+- Searchable arsenal with pack filters and weapon details.
+
+### Battlefield & Simulation
+
+- Seeded terrain and wind.
+- Persistent material terrain, tunnels, overhangs, and defenses.
+- Terrain-following tank movement, movement fuel, and fall damage.
+- Deterministic weapon handlers with bounded shot simulation.
+- Projectile paths and timed terrain, damage, and motion events.
+
+### Battle Console
+
+- Inline angle and power controls, previous/next weapon selection, and a fire button.
+- Mouse, keyboard, and responsive touch controls.
+- Synthesized weapon sounds with immediate mute.
+- Reduced-effects support and a field manual for aiming and terrain tactics.
+- Scores, victory/draw results, and rematches.
+
+### Private Multiplayer
+
+- Invitation codes, callsigns, and a ready-up lobby.
+- Server-validated commands and revision checks.
+- Reconnection to the same seat when refreshing the same tab.
+- 60-second turns, 30-second disconnect forfeits, and two-hour room expiration.
+- Persisted room state and hibernating WebSockets.
+
+---
+
+## How to Play
+
+1. Choose solo, couch duel, or a private room.
+2. Draft your special weapons.
+3. Select a weapon, adjust angle and power, and fire.
+4. Move when needed and use the changing terrain to your advantage.
+5. Play ten volleys each; the highest score wins. Both tanks begin at zero points.
+
+| Input               | Action                                                  |
+| ------------------- | ------------------------------------------------------- |
+| Left / Right arrows | Adjust angle                                            |
+| Up / Down arrows    | Adjust power                                            |
+| Space               | Fire                                                    |
+| A / D               | Move the active tank                                    |
+| On-screen controls  | Aim, choose weapons, move, and fire with mouse or touch |
+
+**Angle reference:** `0°` fires right, `90°` fires up, and `180°` fires left.
+
+---
+
+## Tech Stack
+
+| Layer               | Technology                    | Purpose                                                      |
+| ------------------- | ----------------------------- | ------------------------------------------------------------ |
+| Language            | TypeScript                    | Shared types and rules across client and Worker              |
+| Interface           | HTML + CSS                    | Menus, dialogs, and responsive console controls              |
+| Rendering           | Phaser 3                      | Battlefield drawing and projectile animation                 |
+| Development & Build | Vite                          | Local dev server and frontend bundling                       |
+| Multiplayer Service | Cloudflare Workers + Wrangler | Room routing and local backend development                   |
+| Room Storage        | SQLite-backed Durable Objects | Authoritative room state and persistence                     |
+| Transport           | WebSockets                    | Room updates and player commands                             |
+| Audio               | Browser-synthesized sound     | Weapon launch, impact, and effect cues                       |
+| Unit Tests          | Vitest                        | Rules, terrain, rooms, weapons, and client logic             |
+| Browser Tests       | Playwright                    | Gameplay, layouts, drafting, synchronization, and reconnects |
+| Formatting          | Prettier                      | Consistent source and documentation formatting               |
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    UI[Browser menus and battle controls]
+    Local[Solo and couch match state]
+    Arena[Lazy-loaded Phaser arena]
+    Rules[Shared deterministic game rules]
+    Worker[Multiplayer Worker]
+    Room[GameRoom Durable Object]
+    Storage[(Room persistence)]
+
+    UI -->|Local commands| Local
+    Local --> Rules
+    Local -->|Shot results and state| Arena
+    UI -->|Create room via HTTP| Worker
+    UI <-->|Commands and updates via WebSocket| Worker
+    Worker --> Room
+    Room --> Rules
+    Room <--> Storage
+    UI -->|Authoritative online results| Arena
+```
+
+The Worker resolves online shots and broadcasts their paths, timed events, and resulting state. Clients animate those results. Scores and terrain changes are computed by the shared rules on the server.
+
+Phaser loads when the battlefield is needed. The arena uses fixed logical dimensions, redraws terrain on state changes, and does not use a physics engine or a per-frame network stream. Reduced effects suppress particles while preserving online animation timing.
+
+---
+
+## Match Lifecycle
+
+```mermaid
+flowchart LR
+    Mode[Choose play mode] --> Draft[Draft weapons]
+    Lobby[Private room lobby] -->|Both players ready| Draft
+    Draft --> Battle[Aim, move, and fire]
+    Battle --> Resolve[Resolve shot and update terrain]
+    Resolve -->|Next turn| Battle
+    Resolve -->|Match complete| Results[Scores and result]
+    Results -->|Rematch| Draft
+```
+
+Online rooms own player identity, readiness, deadlines, revisions, and rematch state. Local matches use the same deterministic gameplay modules without a network connection.
+
+---
+
+## Folder Structure
+
+```text
+CraterCrew/
+├── src/
+│   ├── client/
+│   │   ├── main.ts                  # Menus, controls, and network transport
+│   │   ├── arena.ts                 # Phaser battlefield scene
+│   │   ├── state.ts                 # Client state transitions
+│   │   ├── weapon-draft-view.ts     # Draft interface
+│   │   ├── weapon-presentation.ts   # Weapon sound and visual families
+│   │   ├── sound.ts                 # Synthesized audio
+│   │   └── style.css                # Responsive interface styling
+│   └── shared/
+│       ├── game.ts                  # Match rules, terrain, weapons, and bot
+│       ├── materials.ts             # Material grid and persistent terrain
+│       ├── reference-weapons.ts     # Reference inventory and tuning
+│       ├── weapon-draft.ts          # Deterministic draft rules
+│       ├── weapon-engine.ts         # Weapon resolution
+│       ├── weapon-packs/            # Weapon-specific handlers
+│       ├── weapon-timeline.ts       # Timed simulation events
+│       └── room.ts                  # Lobby and authoritative room rules
+├── worker/
+│   └── index.ts                    # HTTP routes, WebSockets, storage, alarms
+├── public/
+│   ├── weapons/                    # Weapon icons
+│   └── ui/                         # Interface artwork
+├── tests/
+│   ├── *.test.ts                   # Unit and regression tests
+│   └── e2e/                        # Playwright browser tests
+├── docs/
+│   ├── previews/                   # Development screenshots
+│   ├── weapon-study/               # Sources and reconstruction evidence
+│   └── superpowers/plans/          # Implementation plans
+├── .env.example                    # Local multiplayer endpoint example
+├── playwright.config.ts            # Browser tests and local test servers
+├── wrangler.toml                   # Worker bindings and allowed origins
+└── package.json                    # Scripts and dependencies
+```
+
+---
+
+## Multiplayer & Storage
+
+| Data                                    | Location                |
+| --------------------------------------- | ----------------------- |
+| Solo and couch match state              | Browser memory          |
+| Callsign, audio, and motion preferences | Browser local storage   |
+| Per-room reconnect credentials          | Browser session storage |
+| Authoritative online room state         | Durable Object storage  |
+
+An invitation opens the join form so a player can enter a callsign. The invitation code provides access to the private room; reconnect credentials preserve a player's seat in the same tab.
+
+The Worker checks allowed origins, command revisions, player actions, and message limits. Room alarms handle deadlines and expiration.
+
+---
+
+## API Reference
+
+| Method / Transport | Route                      | Purpose                                                     |
+| ------------------ | -------------------------- | ----------------------------------------------------------- |
+| `GET`              | `/health`                  | Return service health as `{ "ok": true }`                   |
+| `POST`             | `/api/rooms`               | Create a room and return its invitation code                |
+| WebSocket upgrade  | `/api/rooms/:code/connect` | Join or reconnect using `token` and `name` query parameters |
+
+Room creation and connection require an allowed browser origin. The client handles player commands and incoming room updates over the WebSocket.
+
+---
+
+## Environment Variables
+
+| Variable               | Configuration                       | Purpose                                                          |
+| ---------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `VITE_MULTIPLAYER_URL` | Optional frontend `.env` value      | Multiplayer endpoint; use `http://localhost:8787` locally        |
+| `ALLOWED_ORIGINS`      | Worker variables in `wrangler.toml` | Comma-separated browser origins allowed to create and join rooms |
+
+On `localhost` and `127.0.0.1`, the client defaults to `http://localhost:8787` when no endpoint is supplied. The checked-in Worker configuration permits the local frontend ports `5173` and `4173`.
+
+---
+
+## Local Development
+
+Requires **Node.js 22.12 or newer** and npm.
+
+### 1. Clone & Install
 
 ```sh
+git clone https://github.com/yuvrajsatyapal/CraterCrew.git
+cd CraterCrew
 npm ci
+```
+
+### 2. Start the Frontend
+
+```sh
 npm run dev
 ```
 
-Open http://localhost:5173. Solo and couch duels work immediately. Private online play also requires a second terminal:
+Open [localhost:5173](http://localhost:5173). Solo and couch duels are ready immediately.
+
+### 3. Start Private Multiplayer Locally
+
+In a second terminal:
 
 ```sh
 npm run dev:worker
 ```
 
-Create a room, copy its invitation, open it in another browser/profile, and ready both players. Player reconnect credentials are stored per room in session storage, so refreshing the same tab preserves your seat. An invitation opens the join form rather than joining without a callsign.
+Create a room in the game, copy its invitation, and open it in a second browser or browser profile. Enter both callsigns and ready both players.
 
-## Features
-
-- Solo versus an aiming bot, pass-and-play local duels, private two-player online rooms.
-- Before every match and rematch, draft 20 random special weapons in alternating turns: ten per tank, with a 15-second clock and automatic random picks on timeout. Solo Random visibly deals the remaining weapons one at a time to both tanks, then shows completed loadouts for 1.5 seconds before battle.
-- Seeded terrain, wind, 85 playable weapons, persistent material terrain, fall damage and movement fuel.
-- Six original weapons plus 79 unique weapons individually illustrated on the supplied BlitWise blog, each with its matching icon and reconstructed mechanics. Search the arsenal by name or filter by pack.
-- Previous/next weapon buttons, inline angle/power adjustment, terrain-following movement and per-projectile impact/fall animation.
-- Mouse, keyboard and responsive touch controls; optional synthesized sound and reduced effects.
-- Victory, draws and rematches. Unlimited standard shells; three rounds of each drafted special weapon. Only your drafted weapons appear in your battle arsenal.
-- Server-validated commands, revision checks, bounded shot simulation, persisted room state, WebSocket hibernation, 60-second turns, 30-second disconnect forfeits and two-hour room expiration.
-
-Keyboard: left/right arrows change angle; up/down arrows change power; Space fires; A/D move. The field manual explains aiming and terrain tactics. Each tank starts with zero points. Play ten volleys each; the highest score wins. Angle 0 fires right, 90 up, and 180 left.
-
-## Checks
+For an explicit endpoint configuration, copy the example before starting Vite:
 
 ```sh
-npm run typecheck
-npm test
+cp .env.example .env
+```
+
+### 4. Preview a Local Build
+
+```sh
 npm run build
+npm run preview
+```
+
+Open [localhost:4173](http://localhost:4173). Keep the local Worker running if testing private rooms. These commands build and serve locally.
+
+---
+
+## Testing & Quality Checks
+
+```sh
+# Check frontend and Worker types
+npm run typecheck
+
+# Run unit and regression tests
+npm test
+
+# Compile and bundle the frontend
+npm run build
+
+# Install the browser and run end-to-end tests
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright starts a production preview and local Wrangler server automatically. It uses two isolated browser contexts to verify online synchronization and reconnects. Screenshots and failure traces are written to ignored `test-results/`.
+Playwright starts a frontend preview and a local Wrangler server automatically. Build first so the preview has current output. Online tests use isolated browser contexts to exercise synchronization and reconnection. Failure traces and screenshots go to the ignored `test-results/` directory.
 
-## Free-tier deployment
-
-The source builds without paid services. Hosting can use Cloudflare's free tiers, subject to account quotas. A Cloudflare account is required; a custom domain is optional. No Cloudflare credentials belong in source control.
-
-1. Authenticate using `npx wrangler login`.
-2. In `wrangler.toml`, set `ALLOWED_ORIGINS` to the exact frontend origin, for example `https://cratercrew.pages.dev`. Use a comma-separated list to keep local origins if wanted. Arbitrary Pages preview domains are deliberately not allowed automatically.
-3. Run `npm run deploy:worker`. Record the resulting `https://cratercrew-rooms.<account>.workers.dev` URL.
-4. Create a Pages project named `cratercrew` using the dashboard or `npx wrangler pages project create cratercrew --production-branch main`.
-5. Build and deploy with the Worker URL:
+To check README formatting:
 
 ```sh
-VITE_MULTIPLAYER_URL=https://cratercrew-rooms.YOUR_ACCOUNT.workers.dev npm run deploy:pages
+npx prettier --check README.md
 ```
 
-If the Pages project name differs, change the deploy script and allowed origin to match. Verify `/health` on the Worker, then complete a private match in two browsers on the deployed frontend. Local verification does not substitute for this production smoke test.
+Verification notes are available in [gameplay verification](docs/verification.md), [weapon draft verification](docs/weapon-draft-verification.md), and [weapon audiovisual verification](docs/weapon-audiovisual-verification.md).
 
-For Git-connected Pages builds, set build command `npm run build`, output directory `dist`, and build environment variable `VITE_MULTIPLAYER_URL` to the Worker URL. Deploy the Worker separately when backend code changes. `.env.example` documents local configuration; it contains no secrets.
+---
 
-Static output is also hostable elsewhere. Without a multiplayer endpoint, solo and local play remain available and the online menu explains the missing service.
+## Project Scope
 
-## Architecture
+CraterCrew is a playable learning project centered on local duels and private rooms. Public matchmaking, accounts, and ranked ladders are outside its current scope. Physical phone performance still needs device testing.
 
-- `src/shared/game.ts`: deterministic rules, terrain, weapons, bot and bounded simulation. No Phaser dependency.
-- `src/shared/reference-weapons.ts`: source inventory, pack membership, matching icons and locally chosen tuning.
-- `src/shared/materials.ts`: bounded material grid, tunnels, overhangs, support and persistent defenses.
-- `src/shared/weapon-engine.ts`, `weapon-packs/`, `weapon-timeline.ts`: deterministic weapon handlers, chronological terrain operations, tank motion and damage events.
-- `src/shared/room.ts`: lobby, identity, readiness, authoritative actions, deadlines, reconnect and rematch rules.
-- `worker/index.ts`: origin allowlist, room invitations, WebSockets, persistence, rate/size limits and alarms.
-- `src/client/main.ts`: HTML menus, accessible controls, state and network transport.
-- `src/client/arena.ts`: lazy-loaded Phaser scene, procedural drawing and projectile animation.
-- `src/client/weapon-presentation.ts`: explicit sound and visual families for all 85 playable weapons.
-- `src/client/sound.ts`: synchronized synthesized launch, impact and special-effect cues, bounded voices and immediate mute.
+The multiplayer service includes per-socket limits. A public launch would need an account-level room-creation abuse policy in addition to these controls.
 
-The server resolves a full shot and broadcasts its paths, timestamped effect/damage/terrain events and resulting state. Clients render that result rather than submitting trusted scores or terrain. Online animation lasts the authoritative shot duration; reduced-effects mode suppresses particles while retaining online timing. The scene draws terrain only on state changes, uses fixed logical dimensions, and runs no physics engine or per-frame network stream.
+---
 
-## Scope and limits
+## Credits & References
 
-This is a first playable release, with private rooms rather than public matchmaking, accounts or ranked ladders. Free-tier capacity is finite; inspect usage before opening a public event. Per-socket limits protect room commands, but a large public launch also needs an account-level room-creation rate limiter/Turnstile policy.
-
-The lazy Phaser chunk is roughly 334 KB compressed. The homepage loads the much smaller interface bundle before the engine. Desktop headless rendering is measured in the browser tests; physical midrange-phone performance still needs device testing. The server does not enforce billing quotas; use the free Cloudflare plan if avoiding usage charges is required.
-
-The interface and battlefield use original SVG and procedural drawings; audio is synthesized. Weapon names and the 79 matching icon images come from the user-supplied [BlitWise developer blog](https://www.blitwise.com/mikes-dev-blog). Their source URLs and pack memberships are recorded in `docs/weapon-study/sources.json`. Weapon behavior and numerical tuning are reconstructed for this reverse-engineering learning project; this is not the complete original game's catalog or a recovery of its source code. See `docs/weapon-study/verification.md` for test evidence and coverage.
-
-Cloudflare references: [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), [hibernating WebSockets](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), [Pages limits](https://developers.cloudflare.com/pages/platform/limits/).
-
-Weapon sound/animation reconstruction from the supplied [Pocket Tanks All Weapons recording](https://www.youtube.com/watch?v=CnYdKTtlbb8) is documented in [weapon-audiovisual-verification.md](docs/weapon-audiovisual-verification.md). The sounds are synthesized approximations; original waveforms and exact per-weapon animation timings have not been recovered.
+- The interface and battlefield use original SVG and procedural drawings; audio is synthesized.
+- The 79 reference weapon names and matching icons come from the supplied [BlitWise developer blog](https://www.blitwise.com/mikes-dev-blog). Source URLs and pack membership are recorded in [the source inventory](docs/weapon-study/sources.json).
+- Weapon mechanics and numerical tuning are reconstructed for this learning project. They do not represent recovered original source code or the full original game's catalog. See [weapon study verification](docs/weapon-study/verification.md).
+- Sound and animation reconstruction references the supplied [Pocket Tanks All Weapons recording](https://www.youtube.com/watch?v=CnYdKTtlbb8). Sounds are synthesized approximations; original waveforms and exact animation timings have not been recovered.
