@@ -1,0 +1,31 @@
+{
+  "name": "cratercrew",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit && tsc -p worker/tsconfig.json --noEmit",
+    "dev:worker": "wrangler dev --port 8787",
+    "deploy:worker": "wrangler deploy",
+    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name cratercrew",
+    "format": "prettier --write src worker tests docs *.json *.ts *.html README.md",
+    "format:check": "prettier --check src worker tests docs *.json *.ts *.html README.md"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@playwright/test": "^1.56.0",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.42.0"
+  }
+}
