@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { finishDraft } from "./draft-fixture";
+import { test, expect } from "./draft-fixture";
 for (const size of [
   { width: 1440, height: 900 },
   { width: 390, height: 844 },
@@ -11,6 +12,7 @@ for (const size of [
     await page.setViewportSize(size);
     await page.goto("/");
     await page.locator("#local-play").click();
+    await finishDraft(page);
     await expect(page.locator("#fire")).toBeEnabled();
     await expect(page.locator("#audio-top")).toHaveText("Sound on");
     await page
@@ -25,14 +27,14 @@ for (const size of [
     await expect(page.locator("#weapon-name")).toHaveText("Big Bang");
     await expect(page.locator("#score-0")).toHaveText("0");
     await page.locator("#angle-edit").click();
-    await expect(page.locator("#angle-dial")).toBeVisible();
+    await expect(page.locator("#angle-ruler")).toBeVisible();
     await page.screenshot({ path: `test-results/angle-${size.width}.png` });
     await page.locator("#angle").fill("120");
     await expect(page.locator("#ruler-value")).toHaveText("120°");
     await page.locator("#aim-confirm").click();
     await expect(page.locator("#angle-edit")).toBeFocused();
     await page.locator("#power-edit").click();
-    await expect(page.locator("#power-instrument")).toBeVisible();
+    await expect(page.locator("#power-ruler")).toBeVisible();
     await page.screenshot({ path: `test-results/power-${size.width}.png` });
     await page.locator("#power").fill("35");
     await page.locator("#aim-confirm").click();
@@ -53,6 +55,7 @@ test("six weapon animations finish, apply signed scores and hand off the turn", 
   });
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#audio-top")).toHaveText("Sound off");
   for (const [index, name] of [
     "Standard",
@@ -116,6 +119,7 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     await page.goto("/");
     await page.locator("#local-play").click();
+    await finishDraft(page);
     await page.locator("#weapon-open").click();
     const overflow = await page.locator(".arsenal-weapon").evaluateAll((rows) =>
       rows.flatMap((row) => {
@@ -157,6 +161,7 @@ test("weapon cards show distinct type-specific power and damage", async ({
 }) => {
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await page.locator("#weapon-open").click();
   await expect(page.locator(".weapon-stats")).toHaveCount(85);
   await expect(

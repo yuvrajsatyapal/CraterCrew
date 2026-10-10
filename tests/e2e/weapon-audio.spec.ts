@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { finishDraft } from "./draft-fixture";
+import { test, expect } from "./draft-fixture";
 
 test("real Web Audio distinguishes laser and portal cues, respects mute, and completes turns", async ({
   page,
@@ -41,6 +42,7 @@ test("real Web Audio distinguishes laser and portal cues, respects mute, and com
   });
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   const fireWeapon = async (id: string) => {
     await expect(page.locator("#fire")).toBeEnabled();
     await page.locator("#weapon-open").click();

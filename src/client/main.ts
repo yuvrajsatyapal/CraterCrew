@@ -1,3 +1,11 @@
+import {
+  applyDraft,
+  createDraft,
+  pickWeapon,
+  randomPick,
+  type WeaponDraft,
+} from "../shared/weapon-draft";
+import { mountWeaponDraft } from "./weapon-draft-view";
 import "./style.css";
 import { tankIllustration, menuLandscape } from "./art";
 import {
@@ -27,6 +35,23 @@ const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
   document.querySelector<T>(selector)!;
 const logo = `<svg viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M5 12 18 5l13 7v13l-13 7-13-7Z" stroke="#7edbd1" stroke-width="2"/><path d="m11 15 7-4 7 4v7l-7 4-7-4Z" fill="#7edbd1"/><path d="m17 11 7 4-7 4-6-4Z" fill="#14252c"/><path d="M18 19v7" stroke="#14252c" stroke-width="2"/></svg>`;
 const brand = `<a href="#" class="brand" id="brand" aria-label="CraterCrew home">${logo}<span>Crater<em>Crew</em></span></a>`;
+let draft: WeaponDraft | null = null;
+let draftView: ReturnType<typeof mountWeaponDraft> | null = null;
+let pendingPick: number | null = null;
+let botPickAt = 0;
+let botPickRevision = -1;
+let distributingRandomly = false;
+let nextRandomPickAt = 0;
+let randomPreviewUntil = 0;
+function disposeDraft() {
+  draftView?.dispose();
+  draftView = null;
+  pendingPick = null;
+  botPickRevision = -1;
+  distributingRandomly = false;
+  nextRandomPickAt = 0;
+  randomPreviewUntil = 0;
+}
 let loadingGame = false;
 let sessionVersion = 0;
 let animationVersion = 0;
@@ -116,7 +141,7 @@ function bindHeader() {
   };
 }
 function commonDialogs() {
-  return `<dialog id="help-dialog"><button class="dialog-close" data-close aria-label="Close manual">×</button><div class="eyebrow">FIELD MANUAL / 001</div><h2>Every shot changes the game.</h2><p>Take turns launching shells. Play ten volleys each. Hits and falls score points; hitting yourself subtracts points. The highest score wins. Tanks stay in play until the last volley.</p><div class="help-grid"><b>01</b><span>Set your angle and power. 0° fires right, 90° straight up, and 180° left. Use the barrel direction to aim — there is no projected flight path.</span><b>02</b><span>Watch the wind. Choose a weapon. Standard shells are unlimited; each special weapon has three rounds.</span><b>03</b><span>Move to improve your position. You have six short moves per turn, but steep slopes block your path.</span><b>04</b><span>Keyboard: ← → adjust angle, ↑ ↓ adjust power, Space fires. A / D moves. Online turns last 60 seconds.</span></div><p>Designed for mouse and touch. Landscape gives you more room on a phone.</p><button class="primary" data-close>Got it <span>↗</span></button></dialog><dialog id="exit-dialog"><h2>Leave the battlefield?</h2><p>Local progress will be lost. In an online match, disconnecting for 30 seconds forfeits your tank.</p><div class="dialog-actions"><button class="secondary" data-close>Keep playing</button><button class="primary" id="confirm-exit">Leave match ↗</button></div></dialog>`;
+  return `<dialog id="help-dialog"><button class="dialog-close" data-close aria-label="Close manual">×</button><div class="eyebrow">FIELD MANUAL / 001</div><h2>Every shot changes the game.</h2><p>Take turns launching shells. Play ten volleys each. Hits and falls score points; hitting yourself subtracts points. The highest score wins. Tanks stay in play until the last volley.</p><div class="help-grid"><b>01</b><span>Set your angle and power. 0° fires right, 90° straight up, and 180° left. Use the barrel direction to aim — there is no projected flight path.</span><b>02</b><span>Watch the wind. Draft ten weapons before battle. Standard shells are unlimited; drafted special weapons have their listed ammunition.</span><b>03</b><span>Move to improve your position. You have six short moves per turn, but steep slopes block your path.</span><b>04</b><span>Keyboard: ← → adjust angle, ↑ ↓ adjust power, Space fires. A / D moves. Online turns last 60 seconds.</span></div><p>Designed for mouse and touch. Landscape gives you more room on a phone.</p><button class="primary" data-close>Got it <span>↗</span></button></dialog><dialog id="exit-dialog"><h2>Leave the battlefield?</h2><p>Local progress will be lost. In an online match, disconnecting for 30 seconds forfeits your tank.</p><div class="dialog-actions"><button class="secondary" data-close>Keep playing</button><button class="primary" id="confirm-exit">Leave match ↗</button></div></dialog>`;
 }
 function bindDialogs() {
   document
@@ -150,6 +175,7 @@ function disposeArena() {
 }
 function home() {
   sessionVersion++;
+  disposeDraft();
   document.body.classList.remove("playing");
   disposeArena();
   clearTimeout(botTimer);
@@ -228,6 +254,7 @@ async function joinOnline(code: string) {
   }
   const name = getCallsign();
   sessionVersion++;
+  disposeDraft();
   disposeArena();
   roomCode = code;
   mode = "online";
@@ -261,6 +288,7 @@ function connect(name: string) {
   socket.onopen = () => {
     if (version !== connectionVersion) return;
     busy = false;
+    draftView?.update();
     updateControls();
     toast("Connected to the crew.");
   };
@@ -272,7 +300,11 @@ function connect(name: string) {
       updateLobby();
       updateControls();
     }
-    if (data.type === "error") toast(data.message);
+    if (data.type === "error") {
+      pendingPick = null;
+      draftView?.update();
+      toast(data.message);
+    }
     if (data.type === "shot") {
       void animateShot(data.result);
     }
@@ -285,13 +317,26 @@ function connect(name: string) {
         );
       names = room!.members.map((m) => m.name);
       match = room!.match;
+      draft = room!.draft ?? null;
       if (busy && arena && match.revision > activeShotRevision) {
         animationVersion++;
         arena.scene.cancelAnimation();
         busy = false;
       }
       if (room!.phase === "lobby") updateLobby();
-      else if (!arena && !loadingGame) {
+      else if (room!.phase === "drafting" && room!.draft) {
+        draft = room!.draft;
+        if (pendingPick !== draft.revision) pendingPick = null;
+        if (!draftView) {
+          disposeArena();
+          aim = { angle: 45, power: 60, weapon: "shell" };
+          playerAngles = [45, 135];
+          playerPowers = [60, 60];
+          showDraft();
+        } else draftView.update();
+      } else if (room!.phase === "finished" && room!.draft?.remaining.length) {
+        showDraftOutcome();
+      } else if (!arena && !loadingGame) {
         void showGame();
       } else if (arena && !busy) {
         arena.scene.render(match, aim, playerAngles);
@@ -307,6 +352,8 @@ function connect(name: string) {
     }
     toast("Connection lost. Reconnecting…");
     busy = true;
+    pendingPick = null;
+    draftView?.update();
     updateControls();
     reconnectTimer = window.setTimeout(() => {
       if (version === connectionVersion) connect(name);
@@ -357,6 +404,7 @@ function send(message: unknown) {
 }
 async function start(next: Mode) {
   sessionVersion++;
+  disposeDraft();
   disposeArena();
   clearTimeout(botTimer);
   fpsSamples = [];
@@ -369,13 +417,112 @@ async function start(next: Mode) {
   playerAngles = [45, 135];
   playerPowers = [60, 60];
   busy = false;
-  await showGame();
+  draft = createDraft(match.seed, Date.now());
+  showDraft();
+}
+function tankOwns(id: WeaponId) {
+  // Keep depleted drafted weapons visible, so their ammunition state is clear.
+  return id === "shell" || !!draft?.picks[match.turn].includes(id);
+}
+function finishLocalDraft() {
+  if (!draft || draft.remaining.length) return;
+  match = applyDraft(match, draft);
+  void showGame();
+}
+function showDraft() {
+  document.body.classList.remove("playing");
+  app.innerHTML = `${header()}<main class="weapon-draft-screen" id="weapon-draft-screen"></main>${commonDialogs()}`;
+  bindHeader();
+  bindDialogs();
+  draftView = mountWeaponDraft($("#weapon-draft-screen"), {
+    snapshot: () => ({
+      draft: draft!,
+      names,
+      mode,
+      player,
+      paused: mode === "online" && !!room?.paused,
+      connected: mode !== "online" || socket?.readyState === WebSocket.OPEN,
+      pending: pendingPick === draft?.revision,
+      distributing: distributingRandomly,
+    }),
+    pick: (id, revision) => {
+      if (!draft || distributingRandomly) return;
+      if (mode === "online") {
+        pendingPick = revision;
+        send({ type: "pick", weapon: id, revision });
+        draftView?.update();
+      } else {
+        try {
+          draft = pickWeapon(draft, draft.turn, id, revision, Date.now());
+          sound("click", audio);
+          finishLocalDraft();
+          draftView?.update();
+        } catch (error) {
+          toast((error as Error).message);
+        }
+      }
+    },
+    random: () => {
+      if (mode !== "solo" || !draft || distributingRandomly) return;
+      distributingRandomly = true;
+      nextRandomPickAt = Date.now() + 450;
+      randomPreviewUntil = 0;
+      draftView?.update();
+      $("#weapon-draft-screen").scrollIntoView({ block: "start" });
+    },
+    menu: () => home(),
+    tick: () => {
+      if (mode === "online" || !draft) return;
+      const now = Date.now();
+      if (distributingRandomly) {
+        if (draft.remaining.length && now >= nextRandomPickAt) {
+          draft = randomPick(draft, now);
+          sound("click", audio);
+          nextRandomPickAt = now + 450;
+          if (!draft.remaining.length) randomPreviewUntil = now + 1500;
+        } else if (!draft.remaining.length && now >= randomPreviewUntil) {
+          finishLocalDraft();
+        }
+        return;
+      }
+      if (!draft.remaining.length) return;
+      if (botPickRevision !== draft.revision) {
+        botPickRevision = draft.revision;
+        botPickAt = now + 650;
+      }
+      if (
+        now >= draft.deadline ||
+        (mode === "solo" && draft.turn === 1 && now >= botPickAt)
+      ) {
+        draft = randomPick(draft, now);
+        finishLocalDraft();
+      }
+    },
+  });
+}
+function showDraftOutcome() {
+  disposeDraft();
+  const title =
+    match.winner === "draw"
+      ? "Draft ended in a draw"
+      : `${escapeText(names[match.winner as Player] || "Pilot")} wins`;
+  app.innerHTML = `${header()}<main class="home"><h1>${title}</h1><p>Your rival disconnected before battle.</p><div class="dialog-actions"><button id="draft-rematch" class="primary">Play Again</button><button id="draft-home" class="secondary">Main Menu</button></div></main>${commonDialogs()}`;
+  bindHeader();
+  bindDialogs();
+  $("#draft-home").onclick = () => home();
+  $<HTMLButtonElement>("#draft-rematch").disabled =
+    !!room?.members[player]?.rematch;
+  $("#draft-rematch").onclick = () => {
+    send({ type: "rematch" });
+    $<HTMLButtonElement>("#draft-rematch").disabled = true;
+  };
 }
 async function showGame() {
+  disposeDraft();
   const session = sessionVersion;
   loadingGame = true;
   document.body.classList.add("playing");
-  app.innerHTML = `<main class="game-shell"><section class="hud" aria-label="Match scoreboard"><div class="player"><div class="player-badge">01</div><div class="player-info"><div class="player-meta"><b id="name-0"></b><span id="score-0">0</span></div></div></div><div class="turn-label" id="turn-label" aria-live="polite"></div><div class="player right"><div class="player-badge">02</div><div class="player-info"><div class="player-meta"><b id="name-1"></b><span id="score-1">0</span></div></div></div></section><div class="arena-frame" tabindex="0" role="img" aria-label="Complete battlefield with two tanks and destructible terrain"><div id="arena" class="arena-stage"></div><span class="arena-tag mono"><span id="round-count"></span></span><span id="wind" class="wind-tag mono"></span><div id="battle-message" class="battle-message"></div></div><section id="battle-controls" class="control-panel" aria-label="Tank controls"><div class="console-wordmark" aria-hidden="true"><span>Crater</span><strong>Crew</strong><small>ARTILLERY</small></div><div class="movement console-module"><span class="console-label">Move</span><div class="number-controls"><button id="move-left" class="metal-step" aria-label="Move tank left">«</button><span id="fuel-label" class="number-well">6</span><button id="move-right" class="metal-step" aria-label="Move tank right">»</button></div></div><button id="fire" class="fire-btn">Fire</button><div class="angle-module console-module"><span class="console-label">Angle</span><div class="number-controls"><button id="angle-down" class="metal-step" aria-label="Decrease angle">‹</button><button id="angle-edit" class="number-well" aria-label="Adjust angle"><output id="angle-value">45°</output></button><button id="angle-up" class="metal-step" aria-label="Increase angle">›</button></div></div><div class="weapon-picker console-module"><label class="console-label" for="weapon">Weapon</label><div class="weapon-controls"><span id="weapon-icon" aria-hidden="true">●</span><button id="weapon-open" class="weapon-readout" aria-label="Choose weapon" aria-haspopup="dialog"><span id="weapon-name">Standard</span></button><select id="weapon" hidden aria-hidden="true" tabindex="-1" aria-label="Weapon">${WEAPONS.map((w) => `<option value="${w.id}">${w.name}</option>`).join("")}</select><div class="weapon-arrows"><button id="weapon-prev" class="metal-step" aria-label="Previous weapon">▴</button><button id="weapon-next" class="metal-step" aria-label="Next weapon">▾</button></div></div><span id="ammo-label" class="ammo-readout"></span><div id="weapon-desc" class="sr-only"></div></div><div class="power-module console-module"><div class="power-meter" aria-hidden="true"><i id="power-fill"></i></div><div class="number-controls"><span class="console-label">Power</span><button id="power-down" class="metal-step" aria-label="Decrease power">‹</button><button id="power-edit" class="number-well" aria-label="Adjust power"><output id="power-value">60%</output></button><button id="power-up" class="metal-step" aria-label="Increase power">›</button></div></div><div class="console-tank" aria-hidden="true">${tankIllustration}</div></section><section id="aim-editor" class="aim-editor" hidden aria-label="Fine aiming controls"><div class="ruler-wrap"><div id="angle-ruler"><div id="angle-dial" class="angle-dial" aria-hidden="true"><svg viewBox="0 0 240 130"><path d="M15 115a105 105 0 0 1 210 0" fill="none" stroke="currentColor" stroke-width="2"/>${Array.from(
+  app.innerHTML = `<main class="game-shell"><section class="hud" aria-label="Match scoreboard"><div class="player"><div class="player-badge">01</div><div class="player-info"><div class="player-meta"><b id="name-0"></b><span id="score-0">0</span></div></div></div><div class="turn-label" id="turn-label" aria-live="polite"></div><div class="player right"><div class="player-badge">02</div><div class="player-info"><div class="player-meta"><b id="name-1"></b><span id="score-1">0</span></div></div></div></section><div class="arena-frame" tabindex="0" role="img" aria-label="Complete battlefield with two tanks and destructible terrain"><div id="arena" class="arena-stage"></div><span class="arena-tag mono"><span id="round-count"></span></span><span id="wind" class="wind-tag mono"></span><div id="battle-message" class="battle-message"></div></div><section id="battle-controls" class="control-panel" aria-label="Tank controls"><div class="console-wordmark" aria-hidden="true"><span>Crater</span><strong>Crew</strong><small>ARTILLERY</small></div><div class="movement console-module"><span class="console-label">Move</span><div class="number-controls"><button id="move-left" class="metal-step" aria-label="Move tank left"><span class="key-arrow key-arrow-double-left" aria-hidden="true"></span></button><span id="fuel-label" class="number-well">6</span><button id="move-right" class="metal-step" aria-label="Move tank right"><span class="key-arrow key-arrow-double-right" aria-hidden="true"></span></button></div></div><button id="fire" class="fire-btn" aria-label="Fire"><img src="/ui/fire-lettering.png" class="fire-lettering" alt="" aria-hidden="true"></button><div class="angle-module console-module"><span class="console-label">Angle</span><div class="number-controls"><button id="angle-down" class="metal-step" aria-label="Decrease angle"><span class="key-arrow key-arrow-left" aria-hidden="true"></span></button><button id="angle-edit" class="number-well" aria-label="Adjust angle"><output id="angle-value">45°</output></button><button id="angle-up" class="metal-step" aria-label="Increase angle"><span class="key-arrow key-arrow-right" aria-hidden="true"></span></button></div></div><div class="weapon-picker console-module"><label class="console-label" for="weapon">Weapon</label><div class="weapon-controls"><span id="weapon-icon" aria-hidden="true">●</span><button id="weapon-open" class="weapon-readout" aria-label="Choose weapon" aria-haspopup="dialog"><span id="weapon-name">Standard</span></button><select id="weapon" hidden aria-hidden="true" tabindex="-1" aria-label="Weapon">${WEAPONS.map((w) => `<option value="${w.id}">${w.name}</option>`).join("")}</select><div class="weapon-arrows"><button id="weapon-prev" class="metal-step" aria-label="Previous weapon"><span class="key-arrow key-arrow-up" aria-hidden="true"></span></button><button id="weapon-next" class="metal-step" aria-label="Next weapon"><span class="key-arrow key-arrow-down" aria-hidden="true"></span></button></div></div><span id="ammo-label" class="ammo-readout"></span><div id="weapon-desc" class="sr-only"></div></div><div class="power-module console-module"><div class="power-meter" aria-hidden="true"><i id="power-fill"></i></div><div class="number-controls"><span class="console-label">Power</span><button id="power-down" class="metal-step" aria-label="Decrease power"><span class="key-arrow key-arrow-left" aria-hidden="true"></span></button><button id="power-edit" class="number-well" aria-label="Adjust power"><output id="power-value">60%</output></button><button id="power-up" class="metal-step" aria-label="Increase power"><span class="key-arrow key-arrow-right" aria-hidden="true"></span></button></div></div><div class="console-tank" aria-hidden="true">${tankIllustration}</div></section><section id="aim-editor" class="aim-editor" hidden aria-label="Fine aiming controls"><div class="ruler-wrap"><div id="angle-ruler"><div id="angle-dial" class="angle-dial" aria-hidden="true"><svg viewBox="0 0 240 130"><path d="M15 115a105 105 0 0 1 210 0" fill="none" stroke="currentColor" stroke-width="2"/>${Array.from(
     { length: 19 },
     (_, i) => {
       const r = (i * Math.PI) / 18;
@@ -383,7 +530,7 @@ async function showGame() {
     },
   ).join(
     "",
-  )}<text x="10" y="128">180</text><text x="111" y="16">90</text><text x="225" y="128">0</text><g id="dial-needle"><path d="M120 115h87" stroke="#ed9d29" stroke-width="4"/><circle cx="120" cy="115" r="6" fill="#d7dfbd"/></g></svg></div><label class="sr-only" for="angle">Aim angle</label><input id="angle" type="range" min="0" max="180" step="1" value="45" aria-label="Aim angle"><div class="ruler-labels"><span>0</span><span>30</span><span>60</span><span>90</span><span>120</span><span>150</span><span>180</span></div></div><div id="power-ruler" hidden><div id="power-instrument" class="power-instrument" aria-hidden="true"><i id="instrument-fill"></i></div><label class="sr-only" for="power">Shot power</label><input id="power" type="range" min="10" max="100" step="1" value="60" aria-label="Shot power"><div class="ruler-labels"><span>10</span><span>25</span><span>40</span><span>55</span><span>70</span><span>85</span><span>100</span></div></div></div><button id="aim-minus" class="adjust-step" aria-label="Decrease aim value">−</button><div class="ruler-readout"><span id="ruler-label">ANGLE</span><output id="ruler-value">45°</output></div><button id="aim-plus" class="adjust-step" aria-label="Increase aim value">+</button><button id="aim-confirm" class="aim-confirm" aria-label="Confirm aim">✓</button></section><div class="under-controls"><button id="leave-game" class="icon-btn">Menu</button><span class="game-hint mono">10 VOLLEYS · HIGHEST SCORE WINS</span><div class="preferences"><button class="icon-btn" id="audio-top" aria-pressed="${audio}">${audio ? "Sound on" : "Sound off"}</button><button class="icon-btn" id="motion" aria-pressed="${reduced}">Reduced FX</button><button class="icon-btn" id="manual">? Manual</button></div></div></main>${commonDialogs()}${weaponDialog()}<dialog id="result-dialog"><div class="eyebrow">FINAL SCORE</div><h2 id="result-title"></h2><p id="result-copy"></p><div class="dialog-actions"><button id="rematch" class="primary">Play Again</button><button id="result-home" class="secondary">Main Menu</button></div></dialog>`;
+  )}<text x="10" y="128">180</text><text x="111" y="16">90</text><text x="225" y="128">0</text><g id="dial-needle"><path d="M120 115h87" stroke="#ed9d29" stroke-width="4"/><circle cx="120" cy="115" r="6" fill="#d7dfbd"/></g></svg></div><label class="sr-only" for="angle">Aim angle</label><input id="angle" type="range" min="0" max="180" step="1" value="45" aria-label="Aim angle"><div class="ruler-labels"><span>0</span><span>30</span><span>60</span><span>90</span><span>120</span><span>150</span><span>180</span></div></div><div id="power-ruler" hidden><div id="power-instrument" class="power-instrument" aria-hidden="true"><i id="instrument-fill"></i></div><label class="sr-only" for="power">Shot power</label><input id="power" type="range" min="10" max="100" step="1" value="60" aria-label="Shot power"><div class="ruler-labels"><span>10</span><span>25</span><span>40</span><span>55</span><span>70</span><span>85</span><span>100</span></div></div></div><button id="aim-minus" class="adjust-step" aria-label="Decrease aim value"><span class="editor-arrow editor-arrow-left" aria-hidden="true"></span></button><div class="ruler-readout"><span id="ruler-label">ANGLE</span><output id="ruler-value">45°</output></div><button id="aim-plus" class="adjust-step" aria-label="Increase aim value"><span class="editor-arrow" aria-hidden="true"></span></button><button id="aim-confirm" class="aim-confirm" aria-label="Confirm aim">✓</button></section><div class="under-controls"><button id="leave-game" class="icon-btn">Menu</button><span class="game-hint mono">10 VOLLEYS · HIGHEST SCORE WINS</span><div class="preferences"><button class="icon-btn" id="audio-top" aria-pressed="${audio}">${audio ? "Sound on" : "Sound off"}</button><button class="icon-btn" id="motion" aria-pressed="${reduced}">Reduced FX</button><button class="icon-btn" id="manual">? Manual</button></div></div></main>${commonDialogs()}${weaponDialog()}<dialog id="result-dialog"><div class="eyebrow">FINAL SCORE</div><h2 id="result-title"></h2><p id="result-copy"></p><div class="dialog-actions"><button id="rematch" class="primary">Play Again</button><button id="result-home" class="secondary">Main Menu</button></div></dialog>`;
   bindHeader();
   bindDialogs();
   // Phaser consumes canvas pointer defaults; explicitly restore game-keyboard focus.
@@ -452,6 +599,7 @@ async function showGame() {
       .forEach((button) => {
         const definition = WEAPONS.find((w) => w.id === button.dataset.weapon)!;
         const visible =
+          tankOwns(definition.id) &&
           `${definition.name} ${definition.description}`
             .toLowerCase()
             .includes(query) &&
@@ -570,7 +718,7 @@ function openAim(control: "angle" | "power") {
   $("#battle-controls").hidden = true;
   $("#angle-ruler").hidden = control !== "angle";
   $("#power-ruler").hidden = control !== "power";
-  $("#ruler-label").textContent = control.toUpperCase();
+  $("#ruler-label").textContent = control === "power" ? "Power" : "Angle";
   readAim();
   $<HTMLInputElement>(`#${control}`).focus();
 }
@@ -630,6 +778,16 @@ function readAim() {
   $("#power-value").textContent = `${aim.power}%`;
   $("#power-fill").style.width = `${aim.power}%`;
   $("#instrument-fill").style.width = `${aim.power}%`;
+  $("#power").style.setProperty(
+    "--power-position",
+    `${((aim.power - 10) / 90) * 100}%`,
+  );
+  $("#angle-ruler .ruler-labels").innerHTML = [-10, -5, 0, 5, 10]
+    .map(
+      (offset) =>
+        `<span>${aim.angle + offset < 0 || aim.angle + offset > 180 ? "" : aim.angle + offset}</span>`,
+    )
+    .join("");
   $("#dial-needle").setAttribute("transform", `rotate(${-aim.angle} 120 115)`);
   const active =
     document.querySelector<HTMLElement>("#aim-editor")?.dataset.control;
@@ -672,11 +830,28 @@ function updateWeapon() {
     .forEach((button) => {
       const id = button.dataset.weapon as WeaponId;
       const ammo = tank.ammo[id];
+      const query = $<HTMLInputElement>("#weapon-search")
+        .value.trim()
+        .toLowerCase();
+      const pack = $<HTMLSelectElement>("#weapon-pack").value;
+      const definition = WEAPONS.find((w) => w.id === id)!;
+      button.hidden =
+        !tankOwns(id) ||
+        !`${definition.name} ${definition.description}`
+          .toLowerCase()
+          .includes(query) ||
+        (pack !== "all" && !button.dataset.packs!.split("|").includes(pack));
       button.disabled = !canPlay() || ammo === 0;
       button.setAttribute("aria-pressed", String(id === aim.weapon));
       button.querySelector(".weapon-stock")!.textContent =
         ammo === -1 ? "Unlimited" : ammo === 0 ? "Empty" : `${ammo} rounds`;
     });
+  const visibleCount = document.querySelectorAll(
+    ".arsenal-weapon:not([hidden])",
+  ).length;
+  $("#weapon-results").textContent = visibleCount
+    ? `${visibleCount} weapon${visibleCount === 1 ? "" : "s"}`
+    : "No weapons match. Try another name or pack.";
   $("#ammo-label").textContent =
     tank.ammo[weapon.id] === -1 ? "∞" : `${tank.ammo[weapon.id]} LEFT`;
   Array.from($<HTMLSelectElement>("#weapon").options).forEach((option) => {
@@ -886,6 +1061,7 @@ window.setInterval(() => {
 Object.defineProperty(window, "craterCrewDiagnostics", {
   get: () => ({
     mode,
+    draft: draft ? structuredClone(draft) : null,
     match: structuredClone(match),
     busy,
     player,

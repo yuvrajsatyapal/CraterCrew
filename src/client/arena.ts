@@ -8,6 +8,7 @@ import { WeaponReplay } from "./replay";
 import { tankEventPose } from "../shared/weapon-timeline";
 import { drawMaterialWorld, drawReferenceEffects } from "./reference-effects";
 import Phaser from "phaser";
+import { arenaView } from "./arena-view";
 import {
   WIDTH,
   HEIGHT,
@@ -97,7 +98,11 @@ export class Arena extends Phaser.Scene {
   }
   create() {
     this.backdrop = this.add.graphics();
-    this.drawBackdrop();
+    this.resizeView();
+    this.scale.on("resize", this.resizeView, this);
+    this.events.once("shutdown", () => {
+      this.scale.off("resize", this.resizeView, this);
+    });
     this.terrain = this.add.graphics();
     this.tankBodies = [0, 1].map(() =>
       this.add.container(0, 0, [this.add.graphics()]),
@@ -107,18 +112,31 @@ export class Arena extends Phaser.Scene {
     this.readyResolve();
     if (this.match) this.render(this.match, this.shot);
   }
+  private resizeView() {
+    const width = this.scale.width;
+    const height = this.scale.height;
+    if (!width || !height) return;
+    const view = arenaView(width, height);
+    const camera = this.cameras.main;
+    camera.setViewport(0, 0, width, height);
+    camera.setZoom(view.zoomX, view.zoom);
+    camera.centerOn(WIDTH / 2, HEIGHT - view.height / 2);
+    this.drawBackdrop();
+  }
   private drawBackdrop() {
     const g = this.backdrop;
-    g.fillStyle(0x000000);
-    g.fillRect(0, 0, WIDTH, HEIGHT);
+    const view = arenaView(this.scale.width, this.scale.height);
+    g.clear();
+    g.fillStyle(0x08060e);
+    g.fillRect(view.left - 1, view.top - 1, view.width + 2, view.height + 2);
     // The reference's black sky opens into a purple band near the ground.
     for (let y = 210; y < HEIGHT; y += 2) {
       const t = (y - 210) / (HEIGHT - 210);
-      const r = Math.round(99 * t),
-        green = Math.round(25 * t),
-        b = Math.round(145 * t);
+      const r = Math.round(8 + 91 * t),
+        green = Math.round(6 + 19 * t),
+        b = Math.round(14 + 131 * t);
       g.fillStyle((r << 16) | (green << 8) | b);
-      g.fillRect(0, y, WIDTH, 2);
+      g.fillRect(view.left - 1, y, view.width + 2, 2);
     }
   }
   render(match: Match, shot: Shot, angles?: readonly [number, number]) {
@@ -564,13 +582,16 @@ export function mountArena(parent: string) {
     antialias: false,
     pixelArt: true,
     roundPixels: true,
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scale: { mode: Phaser.Scale.RESIZE },
     fps: { target: 60, forceSetTimeOut: false },
     audio: { noAudio: true },
     banner: false,
   });
   const host = document.getElementById(parent)!;
-  const observer = new ResizeObserver(() => game.scale.refresh());
+  const observer = new ResizeObserver(() => {
+    if (host.clientWidth && host.clientHeight)
+      game.scale.setParentSize(host.clientWidth, host.clientHeight);
+  });
   observer.observe(host);
   game.events.once("destroy", () => observer.disconnect());
   return { game, scene };

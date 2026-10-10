@@ -142,7 +142,17 @@ export class GameRoom implements DurableObject {
         socket.serializeAttachment(attachment);
         if (attachment.count > 30) throw Error("Slow down.");
         const input: unknown = JSON.parse(message);
+        const beforeExpiry = `${this.room.phase}:${this.room.match.revision}:${this.room.draft?.revision}`;
         expire(this.room, now);
+        // Expiration can change the turn before a late packet is rejected.
+        // Persist and announce that transition even when the command fails.
+        if (
+          beforeExpiry !==
+          `${this.room.phase}:${this.room.match.revision}:${this.room.draft?.revision}`
+        ) {
+          await this.save();
+          this.broadcast();
+        }
         const result = command(this.room, attachment.token, input, now);
         await this.save();
         this.broadcast(result ? { type: "shot", result } : undefined);
@@ -216,7 +226,7 @@ export class GameRoom implements DurableObject {
     if (!this.room) return;
     await this.ctx.storage.put("room", this.room);
     const events = [this.room.expiresAt];
-    if (this.room.phase === "playing") {
+    if (this.room.phase === "playing" || this.room.phase === "drafting") {
       if (!this.room.paused) events.push(this.room.deadline);
       for (const m of this.room.members)
         if (!m.connected && m.disconnectedAt !== null)

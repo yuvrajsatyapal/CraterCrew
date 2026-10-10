@@ -8,12 +8,34 @@ import {
   type Room,
 } from "../src/shared/room";
 
+import { createDraft } from "../src/shared/weapon-draft";
 function started(): Room {
-  const room = newRoom(12);
+  let seed = 12;
+  while (
+    !["neutron-beam", "hover-blocks"].every((id) =>
+      createDraft(seed, 1000).remaining.some((weapon) => weapon === id),
+    )
+  )
+    seed++;
+  const room = newRoom(seed);
   joinRoom(room, "token-a", "Nova", 1000);
   joinRoom(room, "token-b", "Rook", 1000);
   command(room, "token-a", { type: "ready" }, 1000);
   command(room, "token-b", { type: "ready" }, 1000);
+  for (let i = 0; i < 20; i++) {
+    const d = room.draft!;
+    command(
+      room,
+      d.turn === 0 ? "token-a" : "token-b",
+      {
+        type: "pick",
+        weapon:
+          i === 0 ? "neutron-beam" : i === 1 ? "hover-blocks" : d.remaining[0],
+        revision: d.revision,
+      },
+      1000,
+    );
+  }
   return room;
 }
 describe("authoritative rooms", () => {
@@ -24,7 +46,7 @@ describe("authoritative rooms", () => {
     expect(r.phase).toBe("lobby");
     joinRoom(r, "b", "Rook", 1000);
     command(r, "b", { type: "ready" }, 1000);
-    expect(r.phase).toBe("playing");
+    expect(r.phase).toBe("drafting");
   });
   it("rejects full rooms and unknown identities", () => {
     const r = started();
@@ -65,7 +87,7 @@ describe("authoritative rooms", () => {
     joinRoom(r, "token-a", "Nova", 40001);
     command(r, "token-a", { type: "rematch" }, 40002);
     command(r, "token-b", { type: "rematch" }, 40002);
-    expect(r.phase).toBe("playing");
+    expect(r.phase).toBe("drafting");
     expect(r.match.winner).toBe(null);
   });
   it("rejects malformed commands and enforces turn timeouts", () => {

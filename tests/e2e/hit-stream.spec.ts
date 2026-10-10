@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { finishDraft } from "./draft-fixture";
+import { test, expect } from "./draft-fixture";
 test("normal-motion multi-hit numbers appear with progressive score and finish at the authoritative total", async ({
   page,
 }) => {
@@ -8,6 +9,7 @@ test("normal-motion multi-hit numbers appear with progressive score and finish a
   });
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await page.locator("#weapon-open").click();
   await page.locator('[data-weapon="neutron-beam"]').click();
   await page.locator("#fire").click();
@@ -33,6 +35,7 @@ test("manual aiming remains available after Reflex Missile auto-alignment", asyn
   });
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await page.locator("#weapon-open").click();
   await page.locator('[data-weapon="reflex-missile"]').click();
   await page.locator("#fire").click();

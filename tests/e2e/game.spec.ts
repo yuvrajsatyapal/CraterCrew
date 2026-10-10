@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { finishDraft, finishOnlineDraft } from "./draft-fixture";
+import { test, expect, type Page } from "./draft-fixture";
 import type { Match } from "../../src/shared/game";
 interface Diagnostics {
   mode: string;
@@ -75,6 +76,7 @@ test("home, local turn, weapon choice and keyboard controls", async ({
     page.getByRole("heading", { name: "CraterCrew", exact: true }),
   ).toBeVisible();
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("canvas")).toBeVisible();
   await expect(page.locator("#fire")).toBeEnabled();
   await page
@@ -99,9 +101,12 @@ test("home, local turn, weapon choice and keyboard controls", async ({
   await expect(page.locator("#power-value")).toHaveText("61%");
 });
 test("solo bot takes a turn and returns control", async ({ page }) => {
+  // Allow the visible AI draft sequence as well as both battle turns.
+  test.setTimeout(90000);
   await instantFX(page);
   await page.goto("/");
   await page.locator("#quick-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await setAimInline(page, "angle", 90);
   await setAimInline(page, "power", 10);
@@ -120,6 +125,7 @@ test("local players keep their own angles across turn cycles", async ({
   await instantFX(page);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await setAimInline(page, "angle", 90);
   await setAimInline(page, "power", 10);
@@ -140,6 +146,7 @@ test("local players keep their own angles across turn cycles", async ({
   await page.locator("#leave-game").click();
   await page.locator("#confirm-exit").click();
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await expect(page.locator("#angle-value")).toHaveText("45°");
 });
@@ -164,6 +171,7 @@ test("online players keep their angles after either player fires", async ({
     await second.locator("#join-room").click();
     await expect(second.locator("#ready")).toBeEnabled();
     await second.locator("#ready").click();
+    await finishOnlineDraft(first, second);
     await expect(first.locator("#fire")).toBeEnabled();
     await setAimInline(first, "angle", 90);
     await setAimInline(first, "power", 10);
@@ -181,12 +189,12 @@ test("online players keep their angles after either player fires", async ({
     await expect(second.locator("#angle-value")).toHaveText("120°");
     await first.reload();
     await first.locator("#join-room").click();
-    await expect(first.locator("canvas")).toBeVisible();
+    await expect(first.locator("canvas")).toBeVisible({ timeout: 15000 });
     await expect(first.locator("#angle-value")).toHaveText("90°");
     await expect(first.locator("#power-value")).toHaveText("10%");
     await second.reload();
     await second.locator("#join-room").click();
-    await expect(second.locator("canvas")).toBeVisible();
+    await expect(second.locator("canvas")).toBeVisible({ timeout: 15000 });
     await expect(second.locator("#angle-value")).toHaveText("120°");
     await expect(second.locator("#power-value")).toHaveText("10%");
   } finally {
@@ -199,6 +207,7 @@ test("touch viewport keeps controls inside the screen", async ({ page }) => {
   await instantFX(page);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("canvas")).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
@@ -230,6 +239,7 @@ test("private online room has authoritative turns and reconnects", async ({
   await second.locator("#join-room").click();
   await expect(second.locator("#ready")).toBeEnabled();
   await second.locator("#ready").click();
+  await finishOnlineDraft(first, second);
   await expect(first.locator("#fire")).toBeEnabled();
   await expect(second.locator("#fire")).toBeDisabled();
   await setAimInline(first, "angle", 90);
@@ -242,7 +252,7 @@ test("private online room has authoritative turns and reconnects", async ({
   );
   await first.reload();
   await first.locator("#join-room").click();
-  await expect(first.locator("canvas")).toBeVisible();
+  await expect(first.locator("canvas")).toBeVisible({ timeout: 15000 });
   await expect(second.locator("#fire")).toBeEnabled();
   expect((await diagnostics(first)).match.revision).toBe(1);
   await expect(first.locator("#angle-value")).toHaveText("90°");
@@ -275,6 +285,7 @@ test("private online room has authoritative turns and reconnects", async ({
   await expect(second.locator("#result-dialog")).toBeVisible();
   await first.locator("#rematch").click();
   await second.locator("#rematch").click();
+  await finishOnlineDraft(first, second);
   await expect(first.locator("#fire")).toBeEnabled();
   await expect(second.locator("#result-dialog")).not.toBeVisible();
   expect((await diagnostics(first)).match).toEqual(
@@ -288,6 +299,7 @@ test("local match reaches victory and restarts cleanly", async ({ page }) => {
   await instantFX(page);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   test.setTimeout(360000);
   await setAimInline(page, "power", 10);
@@ -300,6 +312,7 @@ test("local match reaches victory and restarts cleanly", async ({ page }) => {
   }
   await expect(page.locator("#result-dialog")).toBeVisible();
   await page.locator("#rematch").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   const state = await diagnostics(page);
   expect(state.match.winner).toBe(null);
@@ -316,6 +329,7 @@ test("captures the reference-style desktop design and measures rendering", async
     fullPage: true,
   });
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await expect
     .poll(async () => (await diagnostics(page)).fps)
@@ -343,11 +357,13 @@ test("leaving during a shot cancels old callbacks before a new match", async ({
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await page.locator("#fire").click();
   await page.locator("#leave-game").click();
   await page.locator("#confirm-exit").click();
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   expect((await diagnostics(page)).match.shots).toBe(0);
   expect((await diagnostics(page)).busy).toBe(false);
@@ -360,6 +376,7 @@ test("reference aiming panels support fine adjustment and confirmation", async (
 }) => {
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await expect(page.locator("#score-0")).toHaveText("0");
   await expect(page.locator("#score-1")).toHaveText("0");
@@ -369,6 +386,7 @@ test("reference aiming panels support fine adjustment and confirmation", async (
   await page.locator("#aim-plus").click();
   await expect(page.locator("#ruler-value")).toHaveText("61°");
   await page.locator("#aim-minus").click();
+  await page.screenshot({ path: "test-results/angle-panel.png" });
   await page.locator("#aim-confirm").click();
   await expect(page.locator("#angle-value")).toHaveText("60°");
   await page.locator("#power-edit").click();
@@ -385,6 +403,7 @@ test("whole battlefield and bottom controls fit short and narrow viewports", asy
   test.setTimeout(90000);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   for (const viewport of [
     { width: 1440, height: 900 },
@@ -395,6 +414,7 @@ test("whole battlefield and bottom controls fit short and narrow viewports", asy
     { width: 320, height: 568 },
     { width: 768, height: 1024 },
     { width: 1920, height: 1080 },
+    { width: 2560, height: 1080 },
   ]) {
     await page.setViewportSize(viewport);
     await expect
@@ -407,11 +427,16 @@ test("whole battlefield and bottom controls fit short and narrow viewports", asy
           canvas.y >= frame.y - 1 &&
           canvas.x + canvas.width <= frame.x + frame.width + 1 &&
           canvas.y + canvas.height <= frame.y + frame.height + 1 &&
-          Math.abs(canvas.width / canvas.height - 1.875) < 0.02
+          Math.abs(canvas.width - frame.width) < 2 &&
+          Math.abs(canvas.height - frame.height) < 2
         );
       })
       .toBe(true);
     const controls = await page.locator("#battle-controls").boundingBox();
+    const shell = await page.locator(".game-shell").boundingBox();
+    expect(shell!.x).toBe(0);
+    expect(shell!.width).toBe(viewport.width);
+    expect(controls!.width).toBe(viewport.width);
     expect(controls!.y + controls!.height).toBeLessThanOrEqual(viewport.height);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
@@ -427,6 +452,7 @@ test("Space confirms a focused ruler button without firing a shot", async ({
 }) => {
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await page.locator("#angle-edit").focus();
   await page.keyboard.press("Space");
@@ -447,6 +473,7 @@ test("arcade weapon cycling and inline aiming operate without opening a panel", 
   await instantFX(page);
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   await page.getByRole("button", { name: "Next weapon", exact: true }).click();
   await expect(page.locator("#weapon")).toHaveValue("heavy");
@@ -482,6 +509,7 @@ test("portrait arcade console has touch-sized controls and visible aim editors",
   const page = await context.newPage();
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   for (const id of [
     "move-left",
@@ -508,6 +536,7 @@ test("portrait arcade console has touch-sized controls and visible aim editors",
 test("firing waits for tank movement to finish", async ({ page }) => {
   await page.goto("/");
   await page.locator("#local-play").click();
+  await finishDraft(page);
   await expect(page.locator("#fire")).toBeEnabled();
   const { match } = await diagnostics(page);
   const tank = match.tanks[0];
@@ -534,6 +563,7 @@ for (const weapon of ["turbo-cannon", "reflex-missile"]) {
     await instantFX(page);
     await page.goto("/");
     await page.locator("#local-play").click();
+    await finishDraft(page);
     await expect(page.locator("#fire")).toBeEnabled();
     await setAimInline(page, "angle", 73);
     await setAimInline(page, "power", 28);
