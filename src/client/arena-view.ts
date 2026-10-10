@@ -1,12 +1,13 @@
 import { WIDTH, HEIGHT } from "../shared/game";
 
-/** Fit the simulation uniformly; spare space reveals scenery around the world. */
+/** Fill the screen with playable ground; spare vertical space reveals sky. */
 export function arenaView(width: number, height: number) {
   const zoom = Math.min(width / WIDTH, height / HEIGHT);
-  const viewWidth = width / zoom;
+  const viewWidth = WIDTH;
   const viewHeight = height / zoom;
   return {
     zoom,
+    zoomX: width / WIDTH,
     width: viewWidth,
     height: viewHeight,
     left: (WIDTH - viewWidth) / 2,

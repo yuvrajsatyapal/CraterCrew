@@ -51,7 +51,6 @@ export class Arena extends Phaser.Scene {
   private aim!: Phaser.GameObjects.Graphics;
   private effects!: Phaser.GameObjects.Graphics;
   private backdrop!: Phaser.GameObjects.Graphics;
-  private scenery!: Phaser.GameObjects.Graphics;
   private scorePopups: {
     label: Phaser.GameObjects.Text;
     start: number;
@@ -99,7 +98,6 @@ export class Arena extends Phaser.Scene {
   }
   create() {
     this.backdrop = this.add.graphics();
-    this.scenery = this.add.graphics();
     this.resizeView();
     this.scale.on("resize", this.resizeView, this);
     this.events.once("shutdown", () => {
@@ -121,10 +119,9 @@ export class Arena extends Phaser.Scene {
     const view = arenaView(width, height);
     const camera = this.cameras.main;
     camera.setViewport(0, 0, width, height);
-    camera.setZoom(view.zoom);
+    camera.setZoom(view.zoomX, view.zoom);
     camera.centerOn(WIDTH / 2, HEIGHT - view.height / 2);
     this.drawBackdrop();
-    this.drawScenery();
   }
   private drawBackdrop() {
     const g = this.backdrop;
@@ -140,46 +137,6 @@ export class Arena extends Phaser.Scene {
         b = Math.round(14 + 131 * t);
       g.fillStyle((r << 16) | (green << 8) | b);
       g.fillRect(view.left - 1, y, view.width + 2, 2);
-    }
-  }
-  /** Decorative ground outside the simulation follows its edge height. */
-  private drawScenery(world?: MaterialWorld) {
-    if (!this.scenery || !this.match) return;
-    const view = arenaView(this.scale.width, this.scale.height);
-    const g = this.scenery;
-    g.clear();
-    const surface = this.lastTerrain || this.match.terrain;
-    const material = world || this.match.world;
-    const layers = [
-      [0, 0x46972b],
-      [15, 0x3c8525],
-      [36, 0x327321],
-      [65, 0x28621b],
-      [104, 0x204f16],
-      [155, 0x173e10],
-    ];
-    for (const [edge, end] of [
-      [0, view.left - 2],
-      [WIDTH, view.left + view.width + 2],
-    ]) {
-      const x = edge === 0 ? 0 : WIDTH - 1;
-      const y = material ? supportY(material, x, surface[x]) : surface[x];
-      for (const [depth, color] of layers) {
-        g.fillStyle(color);
-        g.beginPath();
-        g.moveTo(edge, HEIGHT);
-        g.lineTo(edge, Math.min(HEIGHT, y + depth));
-        for (let distance = 8; distance < Math.abs(end - edge); distance += 8) {
-          const point = edge + Math.sign(end - edge) * distance;
-          const hill =
-            Math.sin(distance / 160) * 20 + Math.sin(distance / 67) * 4;
-          g.lineTo(point, Math.min(HEIGHT, y + depth + hill));
-        }
-        g.lineTo(end, Math.min(HEIGHT, y + depth));
-        g.lineTo(end, HEIGHT);
-        g.closePath();
-        g.fillPath();
-      }
     }
   }
   render(match: Match, shot: Shot, angles?: readonly [number, number]) {
@@ -210,7 +167,6 @@ export class Arena extends Phaser.Scene {
     if (match.world) {
       this.lastTerrain = match.terrain;
       drawMaterialWorld(this.terrain, match.world);
-      this.drawScenery(match.world);
     } else this.drawTerrain(match.terrain);
     this.drawTanks();
     this.drawAim();
@@ -228,7 +184,6 @@ export class Arena extends Phaser.Scene {
   private drawTerrain(terrain: number[]) {
     if (terrain === this.lastTerrain) return;
     this.lastTerrain = terrain;
-    this.drawScenery();
     const g = this.terrain;
     g.clear();
     const layers = [
@@ -486,7 +441,6 @@ export class Arena extends Phaser.Scene {
       }
       if (changed || a.terrainKey === -1) {
         drawMaterialWorld(this.terrain, a.world);
-        this.drawScenery(a.world);
         a.terrainKey = elapsed;
       }
       this.poses = a.before.tanks.map((tank, player) => {
