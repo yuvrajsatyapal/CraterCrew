@@ -369,6 +369,7 @@ test("reference aiming panels support fine adjustment and confirmation", async (
   await page.locator("#aim-plus").click();
   await expect(page.locator("#ruler-value")).toHaveText("61°");
   await page.locator("#aim-minus").click();
+  await page.screenshot({ path: "test-results/angle-panel.png" });
   await page.locator("#aim-confirm").click();
   await expect(page.locator("#angle-value")).toHaveText("60°");
   await page.locator("#power-edit").click();
@@ -395,6 +396,7 @@ test("whole battlefield and bottom controls fit short and narrow viewports", asy
     { width: 320, height: 568 },
     { width: 768, height: 1024 },
     { width: 1920, height: 1080 },
+    { width: 2560, height: 1080 },
   ]) {
     await page.setViewportSize(viewport);
     await expect
@@ -407,11 +409,16 @@ test("whole battlefield and bottom controls fit short and narrow viewports", asy
           canvas.y >= frame.y - 1 &&
           canvas.x + canvas.width <= frame.x + frame.width + 1 &&
           canvas.y + canvas.height <= frame.y + frame.height + 1 &&
-          Math.abs(canvas.width / canvas.height - 1.875) < 0.02
+          Math.abs(canvas.width - frame.width) < 2 &&
+          Math.abs(canvas.height - frame.height) < 2
         );
       })
       .toBe(true);
     const controls = await page.locator("#battle-controls").boundingBox();
+    const shell = await page.locator(".game-shell").boundingBox();
+    expect(shell!.x).toBe(0);
+    expect(shell!.width).toBe(viewport.width);
+    expect(controls!.width).toBe(viewport.width);
     expect(controls!.y + controls!.height).toBeLessThanOrEqual(viewport.height);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
